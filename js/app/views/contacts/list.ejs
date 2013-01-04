@@ -1,0 +1,9 @@
+<h1>List contacts </h1>
+<ul>
+<% list(contacts,function(contact){ %>
+	<li <%= (el)->el.data('contact',contact) %> class="contact">
+		<%== can.route.link(contact.fullName(),	{id:contact.attr('id')},
+							{className:'contact-link'}) 
+						%>
+<% }) %>
+</ul>
