@@ -37,7 +37,7 @@ class ArJsonBehavior extends CBehavior
   }
 
   public function getRelations(){
-   return array_keys($this->model->relations());
+    return array_keys($this->model->relations());
   }
 
   public function listModelAttributes(){
