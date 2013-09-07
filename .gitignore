@@ -165,3 +165,7 @@ pip-log.txt
 #yii assets
 assets
 protected/runtime
+js/back
+.phptidy-cache
+access.log
+error.log

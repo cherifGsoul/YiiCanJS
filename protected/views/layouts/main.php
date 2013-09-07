@@ -14,7 +14,7 @@
 
 	<link rel="stylesheet" type="text/css" href="<?php echo Yii::app()->request->baseUrl; ?>/css/main.css" />
 	<link rel="stylesheet" type="text/css" href="<?php echo Yii::app()->request->baseUrl; ?>/css/form.css" />
-	<script type="text/javascript" data-main="<?php echo Yii::app()->request->baseUrl; ?>/js/app" src="<?php echo Yii::app()->request->baseUrl; ?>/js/libs/require.js"></script>
+	
 
 	<title><?php echo CHtml::encode($this->pageTitle); ?></title>
 </head>
@@ -23,17 +23,14 @@
 
 
 <div class="container" id="page">
-	<div id="nav">
-	</div>
 	<div id="content">
-		<div id="post-list"></div>
-		<div id="post-details"></div>
+		<div id="contacts">
+		</div>
 	</div>
-</div><!-- footer -->
-
 </div><!-- page -->
 
-
+<script type="text/javascript" data-main="<?php echo Yii::app()->request->baseUrl; ?>/js/yiican" src="<?php echo Yii::app()->request->baseUrl; ?>/js/bower_components/requirejs/require.js"></script>
+<script type="text/javascript" src="<?php echo Yii::app()->request->baseUrl; ?>/js/requirejsconfig.js"></script>
 
 </body>
 </html>

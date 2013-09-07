@@ -19,9 +19,9 @@ return array(
 	),
 
 	'controllerMap'=>array(
-		'users'=>array(
+		'contacts'=>array(
 			'class'=>'application.components.JsonApiController',
-			'modelName'=>'User',
+			'modelName'=>'Contact',
 		),
 		'posts'=>array(
 			'class'=>'application.components.JsonApiController',
@@ -48,7 +48,11 @@ return array(
 			'allowAutoLogin'=>true,
 		),
 		// uncomment the following to enable URLs in path-format
-		
+		'clientScript'=>array(
+			'scriptMap'=>array(
+				'jquery'=>false,
+			)
+		),
 		'urlManager'=>array(
 			'urlFormat'=>'path',
 			'showScriptName'=>false,
@@ -71,10 +75,10 @@ return array(
 		// uncomment the following to use a MySQL database
 		
 		'db'=>array(
-			'connectionString' => 'mysql:host=localhost;dbname=yiiblog',
+			'connectionString' => 'mysql:host=localhost;dbname=yiican',
 			'emulatePrepare' => true,
 			'username' => 'root',
-			'password' => '',
+			'password' => 'design',
 			'charset' => 'utf8',
 			'tablePrefix' => 'tbl_'
 		),

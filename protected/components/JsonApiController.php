@@ -62,22 +62,15 @@
 	 	*/
 		public function actionIndex()
 		{
-			try{
-					$dataProvider=CActiveRecord::model($this->modelName)->search();
-				}catch(CHttpException $e){
-					echo $e->getMessage();
-				};
 			
-			//var_dump($dataProvider->pagination->params);exit;
+			$limit=Yii::app()->request->getParam('limit');
+			$offset=Yii::app()->request->getParam('offset');
+			$dataProvider=CActiveRecord::model($this->modelName)->search($offset,$limit);
+			$dataProvider->attachBehavior('jsonRelation', new ArJsonBehavior());
+			$data=$dataProvider->jsonEncodeWithRelations('id,firstname,lastname,email,company,location,category');
+			
 			$this->sendResponse(200,CJSON::encode(array(
-													'offset'=>$dataProvider->pagination->offset,
-													'pageVar'=>$dataProvider->pagination->pageVar,
-													'pageCount'=>$dataProvider->pagination->pageCount,
-													'itemCount'=>$dataProvider->pagination->itemCount,
-													'currentPage'=>$dataProvider->pagination->currentPage,
-													'pageSize'=>$dataProvider->pagination->pageSize,
-													'data'=>$dataProvider->data,
-													'params'=>$dataProvider->pagination->params,
+													'data'=>$data,
 								)));
 		}
 		
