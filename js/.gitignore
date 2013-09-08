@@ -1,0 +1,13 @@
+docs/*
+.tmp*
+cookbook*
+site/docs/*
+scripts/key
+.DS_Store
+html/
+selenium.log
+packages/*
+tmp*
+node_modules
+npm-debug.log
+backbone
