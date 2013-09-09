@@ -29,8 +29,17 @@
 	</div>
 </div><!-- page -->
 
-<script type="text/javascript" data-main="<?php echo Yii::app()->request->baseUrl; ?>/js/yiican" src="<?php echo Yii::app()->request->baseUrl; ?>/js/bower_components/requirejs/require.js"></script>
-<script type="text/javascript" src="<?php echo Yii::app()->request->baseUrl; ?>/js/requirejsconfig.js"></script>
+<script type="text/javascript" src="<?php echo Yii::app()->request->baseUrl; ?>/app/steal/steal.js?contacts"></script>
 
+</body>
+</html>
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8" />
+	<title>Document</title>
+</head>
+<body>
+	
 </body>
 </html>

@@ -1,0 +1,43 @@
+<table class="table">
+	<thead class="table-head">
+		<tr>
+		<th class="sortable">
+			Name
+		</th>
+		<th class="sortable">
+			Email
+		</th>
+		<th class="sortable">
+			Catgory
+		</th>
+		<th class="sortable">
+			Location
+		</th>
+		<th class="sortable">
+			Company
+		</th>
+		</tr>
+	</thead>
+	<tbody>
+		{{#this}}
+	<tr>
+		<td>
+			{{firstname}} {{lastname}}
+		</td>
+	
+		<td>
+			{{email}}
+		</td>
+		<td>
+			{{category.name}}
+		</td>
+		<td>
+			{{location.name}}
+		</td>
+		<td>
+			{{company.name}}
+		</td>
+	</tr>
+	</tbody>
+	{{/this}}
+</table>

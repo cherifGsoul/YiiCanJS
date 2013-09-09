@@ -1,0 +1,6 @@
+<% this.each(function(current) { %>
+	<li class="contact" <%= (el) -> el.data('contact', current) %>>
+    <h3><%= current.attr('firstname') %> <a href='javascript://' class='destroy'>X</a></h3>
+    <p><%= current.attr('lastname') %></p>
+	</li>
+<% }) %>

@@ -1,7 +1,0 @@
-<h1>List users </h1>
-<ul>
-<% list(users,function(user){ %>
-	<li <%= (el)->el.data('user',user) %> >
-		<%== can.route.link(user.attr('username'),{id:user.attr('id')},{className:'user'}) %>
-<% }) %>
-</ul>

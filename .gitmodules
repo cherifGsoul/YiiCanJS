@@ -1,3 +1,13 @@
-[submodule "js/contacts"]
-	path = js/contacts
-	url = https://github.com/bitovi/javascriptmvc
+
+[submodule "js/can"]
+	path = js/can
+	url = git://github.com/bitovi/canjs.git
+[submodule "js/jmvc"]
+	path = js/jmvc
+	url = https://github.com/bitovi/jmvc-generators.git
+[submodule "js/jquerypp"]
+	path = js/jquerypp
+	url = https://github.com/bitovi/jquerypp.git
+[submodule "js/steal"]
+	path = js/steal
+	url = https://github.com/bitovi/steal.git

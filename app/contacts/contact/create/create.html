@@ -1,0 +1,32 @@
+<!DOCTYPE HTML>
+<html lang="en">
+	<head>
+		<title>contacts/contact/create</title>
+        <style type='text/css'>
+            body {font-family: verdana}
+        </style>
+	</head>
+	<body>
+	    <h1>contacts/contact/create Demo</h1>
+		<form id='create' action=''></form>
+		<div id='contacts'></div>
+		<script type='text/javascript' 
+                src='../../../steal/steal.js'>
+        </script>
+		<script type='text/javascript'>
+		steal(
+			'contacts/contact/create',
+			'contacts/models/contact.js',
+          	'contacts/models/fixtures',
+          	function(ContactCreate, Contact){
+				
+				new ContactCreate('#create');
+				Contact.bind('created', function(ev, contact){
+					$('<div>').html("<h3>"+contact.name+"</h3><p>"+contact.description+"</p>")
+					        .appendTo( $('#contacts') )
+				})
+				
+			})
+		</script>
+	</body>
+</html>
