@@ -93,7 +93,7 @@ class Contact extends CActiveRecord
 	 * @return CActiveDataProvider the data provider that can return the models
 	 * based on the search/filter conditions.
 	 */
-	public function search($offset=0,$limit=null)
+	public function search()
 	{
 		// @todo Please modify the following code to remove attributes that should not be searched.
 
@@ -109,13 +109,14 @@ class Contact extends CActiveRecord
 		$criteria->compare('user_id',$this->user_id);
 		$criteria->compare('create_time',$this->create_time);
 		$criteria->compare('update_time',$this->update_time);
-		$criteria->offset=$offset;
-		is_null($limit) ? $criteria->limit=5 : $criteria->limit=$limit;
 
-		return new CActiveDataProvider($this, array(
-			'criteria'=>$criteria,
-			'pagination'=>false,
-		));
+
+		// return new CActiveDataProvider($this->filterScope('t.id,t.lastname,t.firstname',array('company'=>array('select'=>'c.name'),'location'=>array('select'=>'name'))), array(
+		// 	'criteria'=>$criteria,
+		// 	'pagination'=>false,
+		// ));
+
+		return $this->JSONExport('t.id,t.lastname,t.firstname',array('company'=>array('select'=>'c.name'),'location'=>array('select'=>'name')),$criteria);
 	}
 
 	/**
@@ -133,7 +134,55 @@ class Contact extends CActiveRecord
 		return array(
 			'json'=>array(
 				'class'=>'ext.behaviors.EJsonBehavior'
-				)
+				),
+			'exportJSON'=>array(
+				'class'=>'ext.behaviors.ExportJSON',
+				),
 			);
 	}
+
+	// public function relatedArs($attributes='*',$relations=array())
+	// {
+		
+	// 	$criteria=$this->getDbCriteria();
+	// 	if($attributes!='*')
+	// 		$select=explode(',', $attributes);
+	// 	else
+	// 		$select=$criteria->select;
+
+	// 	if(empty($relations))
+	// 		$with=$criteria->with;
+	// 	else
+	// 		$with=$relations;
+
+	// 	$criteria->mergeWith(array(
+	// 			'with'=>$with,
+	// 			'select'=>$select
+	// 			));
+
+
+
+	// 	return $this;
+	// }
+
+	// public function exportJSON($attributes='*',$relations=array()){
+	// 	$models=self::model()->relatedArs($attributes,$relations)->findAll();
+	// 	$list=new CList();
+	// 	foreach ($models as $model) {
+	// 		$data=new CMap();
+	// 		foreach ($model->attributes as $key => $value) {
+	// 			$data->add($key,$value);
+
+	// 			foreach ($relations as $k=>$v) {
+	// 				if(is_integer($k))
+	// 					$relation=$v;
+	// 				elseif(is_string($k))
+	// 					$relation=$k;
+	// 				$data->add($relation,$model->getRelated($relation));
+	// 			}
+	// 		}
+	// 		$list->add($data);
+	// 	}
+	// 	return CJSON::encode($list->toArray());
+	// }
 }

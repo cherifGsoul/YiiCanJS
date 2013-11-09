@@ -62,12 +62,20 @@
 	 	*/
 		public function actionIndex()
 		{
+			$model=new $this->modelName('search');
+			$model->unsetAttributes();  // clear any default values
+
+			// echo Contact::model()->JSONExport('t.id,t.lastname,t.firstname',array('company'=>array('select'=>'c.name'),'location'=>array('select'=>'name')),array('limit'=>10, 'offset'=>10,'select'=>''));
+			// Yii::app()->end();
 			
-			$limit=Yii::app()->request->getParam('limit');
-			$offset=Yii::app()->request->getParam('offset');
-			$dataProvider=CActiveRecord::model($this->modelName)->search($offset,$limit);
-			$dataProvider->attachBehavior('jsonRelation', new ArJsonBehavior());
-			$data=$dataProvider->jsonEncodeWithRelations('id,firstname,lastname,email,company,location,category');
+			$model->attributes=$_GET;
+			var_dump($_GET);
+			$dataProvider=$model->search();
+
+
+			// // $dataProvider->attachBehavior('jsonRelation', new ArJsonBehavior());
+			 $data=$dataProvider;
+
 			
 			$this->sendResponse(200,CJSON::encode(array(
 													'data'=>$data,

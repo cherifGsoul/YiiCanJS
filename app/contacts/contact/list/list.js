@@ -1,5 +1,5 @@
-steal('can','./init.mustache', 'contacts/models/contact.js',
-function (can, initMustache, Contact) {
+steal('can','./init.mustache','contacts/ui/pager','contacts/models/contact.js',
+function (can, initMustache,Pager, Contact) {
 	/**
 	 * @constructor contacts/contact/list
 	 * @alias ContactList
@@ -26,10 +26,9 @@ function (can, initMustache, Contact) {
 			this.list = new Contact.List();
 			this.element.html(initMustache(this.list,{who:'cherif'}));
 			this.list.replace(Contact.findAll({limit:10}));
-			console.log(this.list);
 
 			Mustache.registerHelper('greetings',function(str){
-				return 'hello' + strg;
+				return 'hello' + str;
 			})
 		},
 		/**
