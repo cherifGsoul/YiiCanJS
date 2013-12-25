@@ -25,7 +25,9 @@
 	</div>
 </div><!-- page -->
 
-<script type="text/javascript" src="<?php echo Yii::app()->request->baseUrl; ?>/app/steal/steal.js?contacts,development"></script>
+<script type="text/javascript" src="<?php echo Yii::app()->request->baseUrl; ?>/js/bower_components/requirejs/require.js" data-main="<?php echo Yii::app()->request->baseUrl; ?>/js/app.js"></script>
+
+<script type="text/javascript" src="<?php echo Yii::app()->request->baseUrl; ?>/js/require-config.js"></script>
 	
 </body>
 </html>
