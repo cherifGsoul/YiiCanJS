@@ -18,14 +18,14 @@
 <body>
 
 	<div class="container" id="page">
-	<div id="content">
+	<div id="app">
 		<div id="contacts">
 		</div>
 		<div id="pager"></div>
 	</div>
 </div><!-- page -->
 
-<script type="text/javascript" src="<?php echo Yii::app()->request->baseUrl; ?>/js/bower_components/requirejs/require.js" data-main="<?php echo Yii::app()->request->baseUrl; ?>/js/app.js"></script>
+<script type="text/javascript" src="<?php echo Yii::app()->request->baseUrl; ?>/js/bower_components/requirejs/require.js" data-main="/js/app.js"></script>
 
 <script type="text/javascript" src="<?php echo Yii::app()->request->baseUrl; ?>/js/require-config.js"></script>
 	

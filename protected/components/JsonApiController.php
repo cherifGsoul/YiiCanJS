@@ -69,7 +69,6 @@
 			// Yii::app()->end();
 			
 			$model->attributes=$_GET;
-			var_dump($_GET);
 			$dataProvider=$model->search();
 
 

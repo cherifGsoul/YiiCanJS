@@ -163,10 +163,38 @@ pip-log.txt
 .DS_Store
 
 #yii assets
-assets
-protected/runtime
-js/back
-.phptidy-cache
-access.log
-error.log
-bower_components/
+### Yii ###
+assets/
+protected/runtime/
+themes/classic/views/
+
+### Linux ###
+.*
+!.gitignore
+!.git*
+*~
+
+
+### SublimeText ###
+# SublimeText project files
+*.sublime-workspace
+
+### Node ###
+lib-cov
+*.seed
+*.log
+*.csv
+*.dat
+*.out
+*.pid
+*.gz
+
+pids
+logs
+results
+
+npm-debug.log
+node_modules
+
+### Bower ###
+bower_components
