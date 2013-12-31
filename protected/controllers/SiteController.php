@@ -18,6 +18,10 @@ class SiteController extends Controller
 			'page'=>array(
 				'class'=>'CViewAction',
 			),
+			'list'=>array(
+				'class'=>'ext.brest.actions.ListAction',
+				'modelName'=>'Contact',
+				)
 		);
 	}
 

@@ -1,13 +1,13 @@
 define(['can'],function(can){
 	return can.Component.extend({
 		tag:'list',
-		template:'<li><content></content></li>',
+		template:'<ul>{{#each items}}<li>{{id}}</li>{{/each}}</ul>',
 		scope:{
 			items:[],
 		},
 		events:{
 			init:function(){
-				console.log(this.element)
+				console.log()
 			}
 		}
 	})

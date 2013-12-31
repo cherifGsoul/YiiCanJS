@@ -6,11 +6,11 @@
 // This is the main Web application configuration. Any writable
 // CWebApplication properties can be configured here.
 return array(
-	'basePath'=>dirname(__FILE__).DIRECTORY_SEPARATOR.'..',
+	'basePath'=>dirname( __FILE__ ).DIRECTORY_SEPARATOR.'..',
 	'name'=>'Yii CanJS',
 
 	// preloading 'log' component
-	'preload'=>array('log'),
+	'preload'=>array( 'log' ),
 
 	// autoloading model and component classes
 	'import'=>array(
@@ -18,28 +18,29 @@ return array(
 		'application.components.*',
 	),
 
-	'controllerMap'=>array(
-		'contacts'=>array(
-			'class'=>'application.components.JsonApiController',
-			'modelName'=>'Contact',
-		),
-		'posts'=>array(
-			'class'=>'application.components.JsonApiController',
-			'modelName'=>'Post',
-		)
-	),
+	// 'controllerMap'=>array(
+	// 	'contacts'=>array(
+	// 		'class'=>'application.components.JsonApiController',
+	// 		'modelName'=>'Contact',
+	// 	),
+	// 	'posts'=>array(
+	// 		'class'=>'application.components.JsonApiController',
+	// 		'modelName'=>'Post',
+	// 	)
+	// ),
 
 	'modules'=>array(
 		// uncomment the following to enable the Gii tool
-		
+
 		'gii'=>array(
 			'class'=>'system.gii.GiiModule',
-			'password'=>'a',
+			'password'=>false,
 			// If removed, Gii defaults to localhost only. Edit carefully to taste.
-			'ipFilters'=>array('127.0.0.1','::1'),
+			'ipFilters'=>array( '127.0.0.1', '::1' ),
 		),
-	
-		),
+		'api'
+
+	),
 
 	// application components
 	'components'=>array(
@@ -57,12 +58,13 @@ return array(
 			'urlFormat'=>'path',
 			'showScriptName'=>false,
 			'rules'=>array(
-				
-				array('<controller>/index','pattern'=>'api/<controller>','verb'=>'GET'),
-				array('<controller>/show','pattern'=>'api/<controller>/<id\d+>','verb'=>'GET'),
-				array('<controller>/create','pattern'=>'api/<controller>','verb'=>'POST'),
-				array('<controller>/update','pattern'=>'api/<controller>/<id\d+>','verb'=>'PUT'),
-				array('<controller>/delete','pattern'=>'api/<controller>/<id\d+>','verb'=>'DELETE'),
+
+			
+				array( 'api/<model>/list', 'pattern'=>'api/<model>', 'verb'=>'GET' ),
+				array( 'api/<model>/show', 'pattern'=>'api/<model>/<id\d+>', 'verb'=>'GET' ),
+				array( 'api/<model>/create', 'pattern'=>'api/<model>', 'verb'=>'POST' ),
+				array( 'api/<model>/update', 'pattern'=>'api/<model>/<id\d+>', 'verb'=>'PUT' ),
+				array( 'api/<model>/delete', 'pattern'=>'api/<model>/<id\d+>', 'verb'=>'DELETE' ),
 
 
 				'<controller:\w+>/<id:\d+>'=>'<controller>/view',
@@ -70,10 +72,10 @@ return array(
 				'<controller:\w+>/<action:\w+>'=>'<controller>/<action>',
 			),
 		),
-		
-		
+
+
 		// uncomment the following to use a MySQL database
-		
+
 		'db'=>array(
 			'connectionString' => 'mysql:host=localhost;dbname=yiican',
 			'emulatePrepare' => true,
@@ -82,7 +84,7 @@ return array(
 			'charset' => 'utf8',
 			'tablePrefix' => 'tbl_'
 		),
-		
+
 		'errorHandler'=>array(
 			// use 'site/error' action to display errors
 			'errorAction'=>'site/error',

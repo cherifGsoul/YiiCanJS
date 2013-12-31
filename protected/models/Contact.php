@@ -56,7 +56,7 @@ class Contact extends CActiveRecord
 		// class name for the relations automatically generated below.
 		return array(
 			'user' => array(self::BELONGS_TO, 'User', 'user_id'),
-			'category' => array(self::BELONGS_TO, 'Category', 'category_id','select'=>'id,name'),
+			'category' => array(self::BELONGS_TO, 'Category', 'category_id'),
 			'company' => array(self::BELONGS_TO, 'Company', 'company_id'),
 			'location' => array(self::BELONGS_TO, 'Location', 'location_id'),
 		);
@@ -110,13 +110,19 @@ class Contact extends CActiveRecord
 		$criteria->compare('create_time',$this->create_time);
 		$criteria->compare('update_time',$this->update_time);
 
-
-		// return new CActiveDataProvider($this->filterScope('t.id,t.lastname,t.firstname',array('company'=>array('select'=>'c.name'),'location'=>array('select'=>'name'))), array(
-		// 	'criteria'=>$criteria,
-		// 	'pagination'=>false,
-		// ));
-
-		return $this->JSONExport('t.id,t.lastname,t.firstname',array('company'=>array('select'=>'c.name'),'location'=>array('select'=>'name')),$criteria);
+		return $this->export('t.id,t.lastname,t.firstname',
+			array(
+				'category'=>array(
+					'select'=>'name'
+					),
+				'company'=>array(
+					'select'=>'c.name'
+					),
+				'location'=>array(
+					'select'=>'name'
+					)
+				),$criteria
+			);
 	}
 
 	/**
@@ -136,7 +142,7 @@ class Contact extends CActiveRecord
 				'class'=>'ext.behaviors.EJsonBehavior'
 				),
 			'exportJSON'=>array(
-				'class'=>'ext.behaviors.ExportJSON',
+				'class'=>'ext.rest.behaviors.ActiveExportHelper',
 				),
 			);
 	}

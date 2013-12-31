@@ -1,10 +1,10 @@
 define(['can'], function(can) {
 	return can.Model.extend({
-		findAll: 'GET /api/contacts',
-		findOne: 'GET /api/contacts/{id}',
-		create: 'POST /api/contacts',
-		update: 'PUT /api/contacts/{id}',
-		destroy: 'DELETE /api/contacts/{id}'
+		findAll: 'GET /api/contact',
+		findOne: 'GET /api/contact/{id}',
+		create: 'POST /api/contact',
+		update: 'PUT /api/contact/{id}',
+		destroy: 'DELETE /api/contact/{id}'
 
 	},{});
 });

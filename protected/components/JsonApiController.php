@@ -76,9 +76,7 @@
 			 $data=$dataProvider;
 
 			
-			$this->sendResponse(200,CJSON::encode(array(
-													'data'=>$data,
-								)));
+			$this->sendResponse(200,CJSON::encode($data));
 		}
 		
 		public function actionCreate(){

@@ -20,6 +20,7 @@
 	<div class="container" id="page">
 	<div id="app">
 		<div id="contacts">
+			
 		</div>
 		<div id="pager"></div>
 	</div>
