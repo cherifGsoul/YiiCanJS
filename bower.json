@@ -23,6 +23,16 @@
     "node_modules",
     "bower_components",
     "test",
-    "tests"
-  ]
+    "tests",
+    "src/vendors"
+  ],
+  "dependencies": {
+    "canjs": "~2.0.7",
+    "jquery": "1.11.0",
+    "requirejs-text": "~2.0.12",
+    "requirejs": "~2.1.11",
+    "underscore": "~1.6.0",
+    "momentjs": "~2.6.0",
+    "bootstrap": "2.3.2"
+  }
 }
