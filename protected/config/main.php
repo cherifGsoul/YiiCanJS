@@ -60,6 +60,9 @@ return array(
 			'rules'=>array(
 
 			
+				array( 'api/user/login', 	'pattern'=>'api/login', 'verb'=>'POST' ),
+				array( 'api/user/logout', 	'pattern'=>'api/logout', 'verb'=>'GET' ),
+				
 				array( 'api/<model>/list', 'pattern'=>'api/<model>', 'verb'=>'GET' ),
 				array( 'api/<model>/show', 'pattern'=>'api/<model>/<id\d+>', 'verb'=>'GET' ),
 				array( 'api/<model>/create', 'pattern'=>'api/<model>', 'verb'=>'POST' ),

@@ -1,6 +1,0 @@
-[submodule "js/contacts"]
-	path = js/contacts
-	url = https://github.com/bitovi/javascriptmvc.git
-[submodule "js/can"]
-	path = js/can
-	url = git://github.com/bitovi/canjs.git

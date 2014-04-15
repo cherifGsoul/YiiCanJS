@@ -1,0 +1,26 @@
+{
+  "name": "yiican",
+  "version": "0.0.1",
+  "description": "Yii PHP framework with canjs MVC framework",
+  "main": "js/main.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/cherifGsoul/YiiCanJS.git"
+  },
+  "keywords": [
+    "canjs",
+    "yii",
+    "frontend",
+    "backend",
+    "mvc"
+  ],
+  "author": "Cherif BOUCHELAGHEM",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/cherifGsoul/YiiCanJS/issues"
+  },
+  "homepage": "https://github.com/cherifGsoul/YiiCanJS"
+}

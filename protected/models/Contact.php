@@ -142,7 +142,7 @@ class Contact extends CActiveRecord
 				'class'=>'ext.behaviors.EJsonBehavior'
 				),
 			'exportJSON'=>array(
-				'class'=>'ext.rest.behaviors.ActiveExportHelper',
+				'class'=>'ext.rest.behaviors.models.ActiveExportHelper',
 				),
 			);
 	}

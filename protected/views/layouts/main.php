@@ -12,23 +12,17 @@
 	<link rel="stylesheet" type="text/css" href="<?php echo Yii::app()->request->baseUrl; ?>/css/main.css" />
 	<link rel="stylesheet" type="text/css" href="<?php echo Yii::app()->request->baseUrl; ?>/css/form.css" />
 	
-
+		<link rel="stylesheet" type="text/css" href="<?php echo Yii::app()->request->baseUrl; ?>/js/jquery-ui-1.10.3/themes/base/jquery-ui.css" />
+	
 	<title><?php echo CHtml::encode($this->pageTitle); ?></title>
 </head>
 <body>
 
-	<div class="container" id="page">
-	<div id="app">
-		<div id="contacts">
-			
-		</div>
-		<div id="pager"></div>
-	</div>
-</div><!-- page -->
+	<div id="main"></div>
 
-<script type="text/javascript" src="<?php echo Yii::app()->request->baseUrl; ?>/js/bower_components/requirejs/require.js" data-main="/js/app.js"></script>
+<script type="text/javascript" src="<?php echo Yii::app()->request->baseUrl; ?>/js/require.js" data-main="/js/main.js"></script>
 
-<script type="text/javascript" src="<?php echo Yii::app()->request->baseUrl; ?>/js/require-config.js"></script>
+<script type="text/javascript" src="<?php echo Yii::app()->request->baseUrl; ?>/js/requireconfig.js"></script>
 	
 </body>
 </html>

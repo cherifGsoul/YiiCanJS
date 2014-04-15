@@ -83,6 +83,25 @@ class SiteController extends Controller
 	{
 		$model=new LoginForm;
 
+		if(Yii::app()->request->isAjaxRequest){
+			if(isset($_POST)){
+				$model->attributes=$_POST;
+				$response=array();
+				if($model->validate() && $model->login()){
+					$response['authenticated']=true;
+					$response['id']=Yii::app()->user->id;
+					$response['username']=Yii::app()->user->name;
+					
+				}else{
+					$response['authenticated']=false;
+				}
+				header('Content-Type: application/json');
+				echo CJSON::encode($response);
+				Yii::app()->end();
+			}
+			
+		}
+
 		// if it is ajax validation request
 		if(isset($_POST['ajax']) && $_POST['ajax']==='login-form')
 		{

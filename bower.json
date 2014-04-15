@@ -1,0 +1,28 @@
+{
+  "name": "yiican",
+  "version": "0.0.1",
+  "homepage": "https://github.com/cherifGsoul/YiiCanJS",
+  "authors": [
+    "Mohamed Cherif BOUCHELAGHEM <cherif.bouchelaghem@gmail.com>"
+  ],
+  "description": "Yii PHP framework with canjs",
+  "main": "js/main.js",
+  "moduleType": [
+    "amd"
+  ],
+  "keywords": [
+    "canjs",
+    "mvc",
+    "yii",
+    "frontend",
+    "backend"
+  ],
+  "license": "MIT",
+  "ignore": [
+    "**/.*",
+    "node_modules",
+    "bower_components",
+    "test",
+    "tests"
+  ]
+}
