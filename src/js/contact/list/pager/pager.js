@@ -7,9 +7,17 @@ define(['can/util/string',
     }, {
         init: function() {
             var tpl = can.view.mustache(pagerStache);
-
+            var self = this;
             this.element.html(tpl({
                 paginate: this.options.paginate
+            }, {
+                isActive: function(options) {
+                    if (self.options.paginate.page() == options.context) {
+                        return options.fn()
+                    } else {
+                        return options.inverse();
+                    }
+                }
             }));
         },
         ".next click": function() {

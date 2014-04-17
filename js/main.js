@@ -17721,7 +17721,7 @@ define('text',['module'], function (module) {
 });
 
 
-define('text!src/js/contact/list/pager/init.mustache',[],function () { return '<div class="pagination pagination-centered pagination-small">\n<ul>\n\t{{#paginate.canPrev}}\n<li><a href="javascript://" class="prev {{#paginate.canPrev}}enabled{{/paginate.canPrev}}"><<</a></li>\n{{/paginate.canPrev}}\n\n{{#paginate.pages}}\n<li class="page" {{data \'page\'}}>\n\t<a href="javascript://">\n\t\t{{.}}\n\t</a>\n</li>\n\t{{/paginate.pages}}\n\t{{#paginate.canNext}}\n<li><a href="javascript://" class="next {{#paginate.canNext}}enabled{{/paginate.canNext}}">>></a></li>\n{{/paginate.canNext}}\n</ul>\n</div>\n\n';});
+define('text!src/js/contact/list/pager/init.mustache',[],function () { return '<div class="pagination pagination-centered pagination-small">\n<ul>\n\t{{#paginate.canPrev}}\n<li><a href="javascript://" class="prev {{#paginate.canPrev}}enabled{{/paginate.canPrev}}"><<</a></li>\n{{/paginate.canPrev}}\n\n{{#paginate.pages}}\n<li class="page {{#isActive}}active{{/isActive}}" {{data \'page\'}}>\n\t<a href="javascript://">\n\t\t{{.}}\n\t</a>\n</li>\n\t{{/paginate.pages}}\n\t{{#paginate.canNext}}\n<li><a href="javascript://" class="next {{#paginate.canNext}}enabled{{/paginate.canNext}}">>></a></li>\n{{/paginate.canNext}}\n</ul>\n</div>\n\n';});
 
 define('src/js/contact/list/pager/pager',['can/util/string',
     'text!src/js/contact/list/pager/init.mustache',
@@ -17732,9 +17732,17 @@ define('src/js/contact/list/pager/pager',['can/util/string',
     }, {
         init: function() {
             var tpl = can.view.mustache(pagerStache);
-
+            var self = this;
             this.element.html(tpl({
                 paginate: this.options.paginate
+            }, {
+                isActive: function(options) {
+                    if (self.options.paginate.page() == options.context) {
+                        return options.fn()
+                    } else {
+                        return options.inverse();
+                    }
+                }
             }));
         },
         ".next click": function() {

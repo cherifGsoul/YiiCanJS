@@ -5,7 +5,7 @@
 {{/paginate.canPrev}}
 
 {{#paginate.pages}}
-<li class="page" {{data 'page'}}>
+<li class="page {{#isActive}}active{{/isActive}}" {{data 'page'}}>
 	<a href="javascript://">
 		{{.}}
 	</a>
