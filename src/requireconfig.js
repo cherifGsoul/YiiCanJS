@@ -4,5 +4,6 @@ require.config({
         'can': 'vendors/canjs/amd/can',
         'underscore': 'vendors/underscore/underscore',
         'moment': 'vendors/momentjs/moment',
+        text: "vendors/requirejs-text/text",
     }
 });

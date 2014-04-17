@@ -11373,6 +11373,60 @@ define('can/util/string',["can/util/library"], function (can) {
  * Includes: CanJS default build
  * Download from: http://canjs.us/
  */
+define('can/util/bind',["can/util/library"], function (can) {
+	/**
+	 * @typedef {{bind:function():*,unbind:function():*}} can/util/bind
+	 *
+	 * Provides mixin-able bind and unbind methods. `bind()` calls `this._bindsetup`
+	 * when the first bind happens and.  `unbind()` calls `this._bindteardown` when there
+	 * are no more event handlers.
+	 *
+	 */
+	// ## Bind helpers
+	can.bindAndSetup = function () {
+		// Add the event to this object
+		can.addEvent.apply(this, arguments);
+		// If not initializing, and the first binding
+		// call bindsetup if the function exists.
+		if (!this._init) {
+			if (!this._bindings) {
+				this._bindings = 1;
+				// setup live-binding
+				if (this._bindsetup) {
+					this._bindsetup();
+				}
+			} else {
+				this._bindings++;
+			}
+		}
+		return this;
+	};
+	can.unbindAndTeardown = function (ev, handler) {
+		// Remove the event handler
+		can.removeEvent.apply(this, arguments);
+		if (this._bindings === null) {
+			this._bindings = 0;
+		} else {
+			this._bindings--;
+		}
+		// If there are no longer any bindings and
+		// there is a bindteardown method, call it.
+		if (!this._bindings && this._bindteardown) {
+			this._bindteardown();
+		}
+		return this;
+	};
+	return can;
+});
+/*!
+ * CanJS - 2.0.7
+ * http://canjs.us/
+ * Copyright (c) 2014 Bitovi
+ * Wed, 26 Mar 2014 16:12:27 GMT
+ * Licensed MIT
+ * Includes: CanJS default build
+ * Download from: http://canjs.us/
+ */
 define('can/construct',["can/util/string"], function (can) {
 	// ## construct.js
 	// `can.Construct`  
@@ -11920,978 +11974,6 @@ define('can/construct',["can/util/string"], function (can) {
 	 */
 	can.Construct.prototype.init = function () {};
 	return can.Construct;
-});
-/*!
- * CanJS - 2.0.7
- * http://canjs.us/
- * Copyright (c) 2014 Bitovi
- * Wed, 26 Mar 2014 16:12:27 GMT
- * Licensed MIT
- * Includes: CanJS default build
- * Download from: http://canjs.us/
- */
-define('can/control',["can/util/library", "can/construct"], function (can) {
-	// ## control.js
-	// `can.Control`  
-	// _Controller_
-
-	// Binds an element, returns a function that unbinds.
-	var bind = function (el, ev, callback) {
-
-		can.bind.call(el, ev, callback);
-
-		return function () {
-			can.unbind.call(el, ev, callback);
-		};
-	},
-		isFunction = can.isFunction,
-		extend = can.extend,
-		each = can.each,
-		slice = [].slice,
-		paramReplacer = /\{([^\}]+)\}/g,
-		special = can.getObject("$.event.special", [can]) || {},
-
-		// Binds an element, returns a function that unbinds.
-		delegate = function (el, selector, ev, callback) {
-			can.delegate.call(el, selector, ev, callback);
-			return function () {
-				can.undelegate.call(el, selector, ev, callback);
-			};
-		},
-
-		// Calls bind or unbind depending if there is a selector.
-		binder = function (el, ev, callback, selector) {
-			return selector ?
-				delegate(el, can.trim(selector), ev, callback) :
-				bind(el, ev, callback);
-		},
-
-		basicProcessor;
-
-	var Control = can.Control = can.Construct(
-		/**
-		 * @add can.Control
-		 */
-		//
-		/** 
-		 * @static
-		 */
-		{
-			// Setup pre-processes which methods are event listeners.
-			/**
-			 * @hide
-			 *
-			 * Setup pre-process which methods are event listeners.
-			 *
-			 */
-			setup: function () {
-
-				// Allow contollers to inherit "defaults" from super-classes as it 
-				// done in `can.Construct`
-				can.Construct.setup.apply(this, arguments);
-
-				// If you didn't provide a name, or are `control`, don't do anything.
-				if (can.Control) {
-
-					// Cache the underscored names.
-					var control = this,
-						funcName;
-
-					// Calculate and cache actions.
-					control.actions = {};
-					for (funcName in control.prototype) {
-						if (control._isAction(funcName)) {
-							control.actions[funcName] = control._action(funcName);
-						}
-					}
-				}
-			},
-			// Moves `this` to the first argument, wraps it with `jQuery` if it's an element
-			_shifter: function (context, name) {
-
-				var method = typeof name === "string" ? context[name] : name;
-
-				if (!isFunction(method)) {
-					method = context[method];
-				}
-
-				return function () {
-					context.called = name;
-					return method.apply(context, [this.nodeName ? can.$(this) : this].concat(slice.call(arguments, 0)));
-				};
-			},
-
-			// Return `true` if is an action.
-			/**
-			 * @hide
-			 * @param {String} methodName a prototype function
-			 * @return {Boolean} truthy if an action or not
-			 */
-			_isAction: function (methodName) {
-
-				var val = this.prototype[methodName],
-					type = typeof val;
-				// if not the constructor
-				return (methodName !== 'constructor') &&
-				// and is a function or links to a function
-				(type === "function" || (type === "string" && isFunction(this.prototype[val]))) &&
-				// and is in special, a processor, or has a funny character
-				!! (special[methodName] || processors[methodName] || /[^\w]/.test(methodName));
-			},
-			// Takes a method name and the options passed to a control
-			// and tries to return the data necessary to pass to a processor
-			// (something that binds things).
-			/**
-			 * @hide
-			 * Takes a method name and the options passed to a control
-			 * and tries to return the data necessary to pass to a processor
-			 * (something that binds things).
-			 *
-			 * For performance reasons, this called twice.  First, it is called when
-			 * the Control class is created.  If the methodName is templated
-			 * like: "{window} foo", it returns null.  If it is not templated
-			 * it returns event binding data.
-			 *
-			 * The resulting data is added to this.actions.
-			 *
-			 * When a control instance is created, _action is called again, but only
-			 * on templated actions.
-			 *
-			 * @param {Object} methodName the method that will be bound
-			 * @param {Object} [options] first param merged with class default options
-			 * @return {Object} null or the processor and pre-split parts.
-			 * The processor is what does the binding/subscribing.
-			 */
-			_action: function (methodName, options) {
-
-				// If we don't have options (a `control` instance), we'll run this 
-				// later.  
-				paramReplacer.lastIndex = 0;
-				if (options || !paramReplacer.test(methodName)) {
-					// If we have options, run sub to replace templates `{}` with a
-					// value from the options or the window
-					var convertedName = options ? can.sub(methodName, this._lookup(options)) : methodName;
-					if (!convertedName) {
-					
-						return null;
-					}
-					// If a `{}` template resolves to an object, `convertedName` will be
-					// an array
-					var arr = can.isArray(convertedName),
-
-						// Get the name
-						name = arr ? convertedName[1] : convertedName,
-
-						// Grab the event off the end
-						parts = name.split(/\s+/g),
-						event = parts.pop();
-
-					return {
-						processor: processors[event] || basicProcessor,
-						parts: [name, parts.join(" "), event],
-						delegate: arr ? convertedName[0] : undefined
-					};
-				}
-			},
-			_lookup: function (options) {
-				return [options, window];
-			},
-			// An object of `{eventName : function}` pairs that Control uses to 
-			// hook up events auto-magically.
-			/**
-			 * @property {Object.<can.Control.processor>} can.Control.processors processors
-			 * @parent can.Control.static
-			 *
-			 * @description A collection of hookups for custom events on Controls.
-			 *
-			 * @body
-			 * `processors` is an object that allows you to add new events to bind
-			 * to on a control, or to change how existent events are bound. Each
-			 * key-value pair of `processors` is a specification that pertains to
-			 * an event where the key is the name of the event, and the value is
-			 * a function that processes calls to bind to the event.
-			 *
-			 * The processor function takes five arguments:
-			 *
-			 * - _el_: The Control's element.
-			 * - _event_: The event type.
-			 * - _selector_: The selector preceding the event in the binding used on the Control.
-			 * - _callback_: The callback function being bound.
-			 * - _control_: The Control the event is bound on.
-			 *
-			 * Inside your processor function, you should bind _callback_ to the event, and
-			 * return a function for can.Control to call when _callback_ needs to be unbound.
-			 * (If _selector_ is defined, you will likely want to use some form of delegation
-			 * to bind the event.)
-			 *
-			 * Here is a Control with a custom event processor set and two callbacks bound
-			 * to that event:
-			 *
-			 * @codestart
-			 * can.Control.processors.birthday = function(el, ev, selector, callback, control) {
-			 *   if(selector) {
-			 *     myFramework.delegate(ev, el, selector, callback);
-			 *     return function() { myFramework.undelegate(ev, el, selector, callback); };
-			 *   } else {
-			 *     myFramework.bind(ev, el, callback);
-			 *     return function() { myFramework.unbind(ev, el, callback); };
-			 *   }
-			 * };
-			 *
-			 * can.Control("EventTarget", { }, {
-			 *   'birthday': function(el, ev) {
-			 *     // do something appropriate for the occasion
-			 *   },
-			 *   '.grandchild birthday': function(el, ev) {
-			 *     // do something appropriate for the occasion
-			 *   }
-			 * });
-			 *
-			 * var target = new EventTarget('#person');
-			 * @codeend
-			 *
-			 * When `target` is initialized, can.Control will call `can.Control.processors.birthday`
-			 * twice (because there are two event hookups for the _birthday_ event). The first
-			 * time it's called, the arguments will be:
-			 *
-			 * - _el_: A NodeList that wraps the element with id 'person'.
-			 * - _ev_: `'birthday'`
-			 * - _selector_: `''`
-			 * - _callback_: The function assigned to `' birthday'` in the prototype section of `EventTarget`'s
-			 * definition.
-			 * - _control_: `target` itself.
-			 *
-			 * The second time, the arguments are slightly different:
-			 *
-			 * - _el_: A NodeList that wraps the element with id 'person'.
-			 * - _ev_: `'birthday'`
-			 * - _selector_: `'.grandchild'`
-			 * - _callback_: The function assigned to `'.grandchild birthday'` in the prototype section of `EventTarget`'s
-			 * definition.
-			 * - _control_: `target` itself.
-			 *
-			 * can.Control already has processors for these events:
-			 *
-			 *   - change
-			 *   - click
-			 *   - contextmenu
-			 *   - dblclick
-			 *   - focusin
-			 *   - focusout
-			 *   - keydown
-			 *   - keyup
-			 *   - keypress
-			 *   - mousedown
-			 *   - mouseenter
-			 *   - mouseleave
-			 *   - mousemove
-			 *   - mouseout
-			 *   - mouseover
-			 *   - mouseup
-			 *   - reset
-			 *   - resize
-			 *   - scroll
-			 *   - select
-			 *   - submit
-			 */
-			processors: {},
-			// A object of name-value pairs that act as default values for a 
-			// control instance
-			defaults: {}
-			/**
-			 * @property {Object} can.Control.defaults defaults
-			 * @parent can.Control.static
-			 * @description Default values for the Control's options.
-			 *
-			 * @body
-			 * `defaults` provides default values for a Control's options.
-			 * Options passed into the constructor function will be shallowly merged
-			 * into the values from defaults in [can.Control::setup], and
-			 * the result will be stored in [can.Control::options this.options].
-			 *
-			 *     Message = can.Control.extend({
-			 *       defaults: {
-			 *         message: "Hello World"
-			 *       }
-			 *     }, {
-			 *       init: function(){
-			 *         this.element.text( this.options.message );
-			 *       }
-			 *     });
-			 *
-			 *     new Message( "#el1" ); //writes "Hello World"
-			 *     new Message( "#el12", { message: "hi" } ); //writes hi
-			 */
-		}, {
-			/**
-			 * @prototype
-			 */
-			//
-			/**
-			 * @functioncan.Control.prototype.init init
-			 * @parent can.Control.prototype
-			 * @description instance init method required for most applications of [can.Control]
-			 * @signature `control.init(element,options)`
-			 * @param element The wrapped element passed to the control.
-			 *		Control accepts a raw HTMLElement, a CSS selector, or a NodeList.
-			 *		This is set as `this.element` on the control instance.
-			 * @param options The second argument passed to new Control,
-			 *		extended with the can.Control's static _defaults__.
-			 *		This is set as `this.options` on the control instance.
-			 *		Note that static is used formally to indicate that
-			 *		_default values are shared across control instances_.
-			 *
-			 * @body
-			 * Any additional arguments provided to the constructor will be passed as normal.
-			 */
-			// Sets `this.element`, saves the control in `data, binds event
-			// handlers.
-			/**
-			 * @property {NodeList} can.Control.prototype.element element
-			 * @parent can.Control.prototype
-			 * @description The element associated with this control.
-			 *
-			 * @body
-			 * The library-wrapped element this control is associated with,
-			 * as passed into the constructor. If you want to change the element
-			 * that a Control will attach to, you should do it in [can.Control::setup setup].
-			 * If you change the element later, make sure to call [can.Control::on on]
-			 * to rebind all the bindings.
-			 *
-			 * If `element` is removed from the DOM, [can.Control::destroy] will
-			 * be called and the Control will be destroyed.
-			 */
-			//
-			/**
-			 * @function can.Control.prototype.setup setup
-			 * @parent can.Control.prototype
-			 * @description Perform pre-initialization logic.
-			 * @signature `control.setup(element, options)`
-			 * @param {HTMLElement|NodeList|String} element The element as passed to the constructor.
-			 * @param {Object} [options] option values for the control.  These get added to
-			 * this.options and merged with [can.Control.static.defaults defaults].
-			 * @return {undefined|Array} return an array if you want to change what init is called with. By
-			 * default it is called with the element and options passed to the control.
-			 *
-			 * @body
-			 * Setup is where most of control's magic happens.  It does the following:
-			 *
-			 * ### Sets this.element
-			 *
-			 * The first parameter passed to new Control( el, options ) is expected to be
-			 * an element.  This gets converted to a Wrapped NodeList element and set as
-			 * [can.Control.prototype.element this.element].
-			 *
-			 * ### Adds the control's name to the element's className
-			 *
-			 * Control adds it's plugin name to the element's className for easier
-			 * debugging.  For example, if your Control is named "Foo.Bar", it adds
-			 * "foo_bar" to the className.
-			 *
-			 * ### Saves the control in $.data
-			 *
-			 * A reference to the control instance is saved in $.data.  You can find
-			 * instances of "Foo.Bar" like:
-			 *
-			 *     $( '#el' ).data( 'controls' )[ 'foo_bar' ]
-			 *
-			 * ### Merges Options
-			 * Merges the default options with optional user-supplied ones.
-			 * Additionally, default values are exposed in the static [can.Control.static.defaults defaults]
-			 * so that users can change them.
-			 *
-			 * ### Binds event handlers
-			 *
-			 * Setup does the event binding described in [can.Control].
-			 */
-			setup: function (element, options) {
-
-				var cls = this.constructor,
-					pluginname = cls.pluginName || cls._fullName,
-					arr;
-
-				// Want the raw element here.
-				this.element = can.$(element);
-
-				if (pluginname && pluginname !== 'can_control') {
-					// Set element and `className` on element.
-					this.element.addClass(pluginname);
-				}
-				arr = can.data(this.element, 'controls');
-				if (!arr) {
-					arr = [];
-					can.data(this.element, 'controls', arr);
-				}
-				arr.push(this);
-
-				// Option merging.
-				/**
-				 * @property {Object} can.Control.prototype.options options
-				 * @parent can.Control.prototype
-				 *
-				 * @description
-				 *
-				 * Options used to configure a control.
-				 *
-				 * @body
-				 *
-				 * The `this.options` property is an Object that contains
-				 * configuration data passed to a control when it is
-				 * created (`new can.Control(element, options)`).
-				 *
-				 * In the following example, an options object with
-				 * a message is passed to a `Greeting` control. The
-				 * `Greeting` control changes the text of its [can.Control::element element]
-				 * to the options' message value.
-				 *
-				 *     var Greeting = can.Control.extend({
-				 *       init: function(){
-				 *         this.element.text( this.options.message )
-				 *       }
-				 *     })
-				 *
-				 *     new Greeting("#greeting",{message: "I understand this.options"})
-				 *
-				 * The options argument passed when creating the control
-				 * is merged with [can.Control.defaults defaults] in
-				 * [can.Control.prototype.setup setup].
-				 *
-				 * In the following example, if no message property is provided,
-				 * the defaults' message property is used.
-				 *
-				 *     var Greeting = can.Control.extend({
-				 *       defaults: {
-				 *         message: "Defaults merged into this.options"
-				 *       }
-				 *     },{
-				 *       init: function(){
-				 *         this.element.text( this.options.message )
-				 *       }
-				 *     })
-				 *
-				 *     new Greeting("#greeting")
-				 *
-				 */
-				this.options = extend({}, cls.defaults, options);
-
-				// Bind all event handlers.
-				this.on();
-
-				// Gets passed into `init`.
-				/**
-				 * @property {can.NodeList} can.Control.prototype.element element
-				 *
-				 * @description The element the Control is associated with.
-				 *
-				 * @parent can.Control.prototype
-				 *
-				 * @body
-				 *
-				 * The control instance's HTMLElement (or window) wrapped by the
-				 * util library for ease of use. It is set by the first
-				 * parameter to `new can.Construct( element, options )`
-				 * in [can.Control::setup].  By default, a control listens to events on `this.element`.
-				 *
-				 * ### Quick Example
-				 *
-				 * The following `HelloWorld` control sets the control`s text to "Hello World":
-				 *
-				 *     HelloWorld = can.Control({
-				 *       init: function(){
-				 *		this.element.text( 'Hello World' );
-				 *       }
-				 *     });
-				 *
-				 *     // create the controller on the element
-				 *     new HelloWorld( document.getElementById( '#helloworld' ) );
-				 *
-				 * ## Wrapped NodeList
-				 *
-				 * `this.element` is a wrapped NodeList of one HTMLELement (or window).  This
-				 * is for convenience in libraries like jQuery where all methods operate only on a
-				 * NodeList.  To get the raw HTMLElement, write:
-				 *
-				 *     this.element[0] //-> HTMLElement
-				 *
-				 * The following details the NodeList used by each library with
-				 * an example of updating its text:
-				 *
-				 * __jQuery__ `jQuery( HTMLElement )`
-				 *
-				 *     this.element.text("Hello World")
-				 *
-				 * __Zepto__ `Zepto( HTMLElement )`
-				 *
-				 *     this.element.text("Hello World")
-				 *
-				 * __Dojo__ `new dojo.NodeList( HTMLElement )`
-				 *
-				 *     this.element.text("Hello World")
-				 *
-				 * __Mootools__ `$$( HTMLElement )`
-				 *
-				 *     this.element.empty().appendText("Hello World")
-				 *
-				 * __YUI__
-				 *
-				 *     this.element.set("text", "Hello World")
-				 *
-				 *
-				 * ## Changing `this.element`
-				 *
-				 * Sometimes you don't want what's passed to `new can.Control`
-				 * to be this.element.  You can change this by overwriting
-				 * setup or by unbinding, setting this.element, and rebinding.
-				 *
-				 * ### Overwriting Setup
-				 *
-				 * The following Combobox overwrites setup to wrap a
-				 * select element with a div.  That div is used
-				 * as `this.element`. Notice how `destroy` sets back the
-				 * original element.
-				 *
-				 *     Combobox = can.Control({
-				 *       setup: function( el, options ) {
-				 *          this.oldElement = $( el );
-				 *          var newEl = $( '<div/>' );
-				 *          this.oldElement.wrap( newEl );
-				 *          can.Control.prototype.setup.call( this, newEl, options );
-				 *       },
-				 *       init: function() {
-				 *          this.element //-> the div
-				 *       },
-				 *       ".option click": function() {
-				 *         // event handler bound on the div
-				 *       },
-				 *       destroy: function() {
-				 *          var div = this.element; //save reference
-				 *          can.Control.prototype.destroy.call( this );
-				 *          div.replaceWith( this.oldElement );
-				 *       }
-				 *     });
-				 *
-				 * ### unbinding, setting, and rebinding.
-				 *
-				 * You could also change this.element by calling
-				 * [can.Control::off], setting this.element, and
-				 * then calling [can.Control::on] like:
-				 *
-				 *     move: function( newElement ) {
-				 *        this.off();
-				 *        this.element = $( newElement );
-				 *        this.on();
-				 *     }
-				 */
-				return [this.element, this.options];
-			},
-			/**
-			 * @function can.Control.prototype.on on
-			 * @parent can.Control.prototype
-			 *
-			 * @description Bind an event handler to a Control, or rebind all event handlers on a Control.
-			 *
-			 * @signature `control.on([el,] selector, eventName, func)`
-			 * @param {HTMLElement|jQuery collection|Object} [el=this.element]
-			 * The element to be bound.  If no element is provided, the control's element is used instead.
-			 * @param {CSSSelectorString} selector A css selector for event delegation.
-			 * @param {String} eventName The event to listen for.
-			 * @param {Function|String} func A callback function or the String name of a control function.  If a control
-			 * function name is given, the control function is called back with the bound element and event as the first
-			 * and second parameter.  Otherwise the function is called back like a normal bind.
-			 * @return {Number} The id of the binding in this._bindings
-			 *
-			 * @body
-			 * `on(el, selector, eventName, func)` binds an event handler for an event to a selector under the scope of the given element.
-			 *
-			 * @signature `control.on()`
-			 *
-			 * Rebind all of a control's event handlers.
-			 *
-			 * @return {Number} The number of handlers bound to this Control.
-			 *
-			 * @body
-			 * `this.on()` is used to rebind
-			 * all event handlers when [can.Control::options this.options] has changed.  It
-			 * can also be used to bind or delegate from other elements or objects.
-			 *
-			 * ## Rebinding
-			 *
-			 * By using templated event handlers, a control can listen to objects outside
-			 * `this.element`.  This is extremely common in MVC programming.  For example,
-			 * the following control might listen to a task model's `completed` property and
-			 * toggle a strike className like:
-			 *
-			 *     TaskStriker = can.Control({
-			 *       "{task} completed": function(){
-			 *			this.update();
-			 *       },
-			 *       update: function(){
-			 *         if ( this.options.task.completed ) {
-			 *			this.element.addClass( 'strike' );
-			 *		} else {
-			 *           this.element.removeClass( 'strike' );
-			 *         }
-			 *       }
-			 *     });
-			 *
-			 *     var taskstriker = new TaskStriker({
-			 *       task: new Task({ completed: 'true' })
-			 *     });
-			 *
-			 * To update the `taskstriker`'s task, add a task method that updates
-			 * this.options and rebinds the event handlers for the new task like:
-			 *
-			 *     TaskStriker = can.Control({
-			 *       "{task} completed": function(){
-			 *			this.update();
-			 *       },
-			 *       update: function() {
-			 *         if ( this.options.task.completed ) {
-			 *			this.element.addClass( 'strike' );
-			 *		} else {
-			 *           this.element.removeClass( 'strike' );
-			 *         }
-			 *       },
-			 *       task: function( newTask ) {
-			 *         this.options.task = newTask;
-			 *         this.on();
-			 *         this.update();
-			 *       }
-			 *     });
-			 *
-			 *     var taskstriker = new TaskStriker({
-			 *       task: new Task({ completed: true })
-			 *     });
-			 *     taskstriker.task( new TaskStriker({
-			 *       task: new Task({ completed: false })
-			 *     }));
-			 *
-			 * ## Adding new events
-			 *
-			 * If events need to be bound to outside of the control and templated event handlers
-			 * are not sufficient, you can call this.on to bind or delegate programmatically:
-			 *
-			 *     init: function() {
-			 *        // calls somethingClicked( el, ev )
-			 *        this.on( 'click', 'somethingClicked' );
-			 *
-			 *        // calls function when the window is clicked
-			 *        this.on( window, 'click', function( ev ) {
-			 *          //do something
-			 *        });
-			 *     },
-			 *     somethingClicked: function( el, ev ) {
-			 *
-			 *     }
-			 */
-			on: function (el, selector, eventName, func) {
-				if (!el) {
-
-					// Adds bindings.
-					this.off();
-
-					// Go through the cached list of actions and use the processor 
-					// to bind
-					var cls = this.constructor,
-						bindings = this._bindings,
-						actions = cls.actions,
-						element = this.element,
-						destroyCB = can.Control._shifter(this, "destroy"),
-						funcName, ready;
-
-					for (funcName in actions) {
-						// Only push if we have the action and no option is `undefined`
-						if (actions.hasOwnProperty(funcName) &&
-							(ready = actions[funcName] || cls._action(funcName, this.options))) {
-							bindings.push(ready.processor(ready.delegate || element,
-								ready.parts[2], ready.parts[1], funcName, this));
-						}
-					}
-
-					// Setup to be destroyed...  
-					// don't bind because we don't want to remove it.
-					can.bind.call(element, "removed", destroyCB);
-					bindings.push(function (el) {
-						can.unbind.call(el, "removed", destroyCB);
-					});
-					return bindings.length;
-				}
-
-				if (typeof el === 'string') {
-					func = eventName;
-					eventName = selector;
-					selector = el;
-					el = this.element;
-				}
-
-				if (func === undefined) {
-					func = eventName;
-					eventName = selector;
-					selector = null;
-				}
-
-				if (typeof func === 'string') {
-					func = can.Control._shifter(this, func);
-				}
-
-				this._bindings.push(binder(el, eventName, func, selector));
-
-				return this._bindings.length;
-			},
-			// Unbinds all event handlers on the controller.
-			/**
-			 * @hide
-			 * Unbinds all event handlers on the controller. You should never
-			 * be calling this unless in use with [can.Control::on].
-			 */
-			off: function () {
-				var el = this.element[0];
-				each(this._bindings || [], function (value) {
-					value(el);
-				});
-				// Adds bindings.
-				this._bindings = [];
-			},
-			// Prepares a `control` for garbage collection
-			/**
-			 * @description Remove a Control from an element and clean up the Control.
-			 * @signature `control.destroy()`
-			 *
-			 * Prepares a control for garbage collection and is a place to
-			 * reset any changes the control has made.
-			 *
-			 * @function can.Control.prototype.destroy destroy
-			 * @parent can.Control.prototype
-			 *
-			 * @body
-			 *
-			 *
-			 * ## Allowing Garbage Collection
-			 *
-			 * Destroy is called whenever a control's element is removed from the page using
-			 * the library's standard HTML modifier methods.  This means that you
-			 * don't have to call destroy yourself and it
-			 * will be called automatically when appropriate.
-			 *
-			 * The following `Clicker` widget listens on the window for clicks and updates
-			 * its element's innerHTML.  If we remove the element, the window's event handler
-			 * is removed auto-magically:
-			 *
-			 *
-			 *      Clickr = can.Control({
-			 *       "{window} click": function() {
-			 *			this.element.html( this.count ?
-			 *			this.count++ : this.count = 0 );
-			 *       }
-			 *     });
-			 *
-			 *     // create a clicker on an element
-			 *     new Clicker( "#clickme" );
-			 *
-			 *     // remove the element
-			 *     $( '#clickme' ).remove();
-			 *
-			 *
-			 * The methods you can use that will destroy controls automatically by library:
-			 *
-			 * __jQuery and Zepto__
-			 *
-			 *   - $.fn.remove
-			 *   - $.fn.html
-			 *   - $.fn.replaceWith
-			 *   - $.fn.empty
-			 *
-			 * __Dojo__
-			 *
-			 *   - dojo.destroy
-			 *   - dojo.empty
-			 *   - dojo.place (with the replace option)
-			 *
-			 * __Mootools__
-			 *
-			 *   - Element.prototype.destroy
-			 *
-			 * __YUI__
-			 *
-			 *   - Y.Node.prototype.remove
-			 *   - Y.Node.prototype.destroy
-			 *
-			 *
-			 * ## Teardown in Destroy
-			 *
-			 * Sometimes, you want to reset a controlled element back to its
-			 * original state when the control is destroyed.  Overwriting destroy
-			 * lets you write teardown code of this manner.  __When overwriting
-			 * destroy, make sure you call Control's base functionality__.
-			 *
-			 * The following example changes an element's text when the control is
-			 * created and sets it back when the control is removed:
-			 *
-			 *     Changer = can.Control.extend({
-			 *       init: function() {
-			 *         this.oldText = this.element.text();
-			 *         this.element.text( "Changed!!!" );
-			 *       },
-			 *       destroy: function() {
-			 *         this.element.text( this.oldText );
-			 *         can.Control.prototype.destroy.call( this );
-			 *       }
-			 *     });
-			 *
-			 *     // create a changer which changes #myel's text
-			 *     var changer = new Changer( '#myel' );
-			 *
-			 *     // destroy changer which will reset it
-			 *     changer.destroy();
-			 *
-			 * ## Base Functionality
-			 *
-			 * Control prepares the control for garbage collection by:
-			 *
-			 *   - unbinding all event handlers
-			 *   - clearing references to this.element and this.options
-			 *   - clearing the element's reference to the control
-			 *   - removing it's [can.Control.pluginName] from the element's className
-			 *
-			 */
-			destroy: function () {
-				//Control already destroyed
-				if (this.element === null) {
-				
-					return;
-				}
-				var Class = this.constructor,
-					pluginName = Class.pluginName || Class._fullName,
-					controls;
-
-				// Unbind bindings.
-				this.off();
-
-				if (pluginName && pluginName !== 'can_control') {
-					// Remove the `className`.
-					this.element.removeClass(pluginName);
-				}
-
-				// Remove from `data`.
-				controls = can.data(this.element, "controls");
-				controls.splice(can.inArray(this, controls), 1);
-
-				can.trigger(this, "destroyed"); // In case we want to know if the `control` is removed.
-
-				this.element = null;
-			}
-		});
-
-	var processors = can.Control.processors;
-	// Processors do the binding.
-	// They return a function that unbinds when called.
-	//
-	// The basic processor that binds events.
-	basicProcessor = function (el, event, selector, methodName, control) {
-		return binder(el, event, can.Control._shifter(control, methodName), selector);
-	};
-
-	// Set common events to be processed as a `basicProcessor`
-	each(["change", "click", "contextmenu", "dblclick", "keydown", "keyup",
-		"keypress", "mousedown", "mousemove", "mouseout", "mouseover",
-		"mouseup", "reset", "resize", "scroll", "select", "submit", "focusin",
-		"focusout", "mouseenter", "mouseleave",
-		// #104 - Add touch events as default processors
-		// TOOD feature detect?
-		"touchstart", "touchmove", "touchcancel", "touchend", "touchleave"
-	], function (v) {
-		processors[v] = basicProcessor;
-	});
-
-	return Control;
-});
-define('src/js/home/home',['can/util/string', 'can/control'], function(can) {
-    return can.Control.extend({
-        defaults: {
-            views: {}
-        }
-    }, {
-        init: function(el, options) {
-            el.html('Homepage content');
-        }
-    });
-});
-define('src/js/appcontrol/appcontrol',['can/util/string', 'src/js/home/home', 'can/control'], function(can, Home) {
-    return can.Control.extend({
-        defaults: {
-            controls: {
-                home: Home
-            }
-        }
-    }, {
-        init: function(el, opts) {
-            this.startControl(can.route.attr('control'));
-        },
-        '{can.route} control': function(route, ev, newVal, oldVal) {
-            this.startControl(newVal);
-        },
-        startControl: function(control) {
-            var control = this.options.controls[control];
-            var el = $('<div/>');
-            if (can.isFunction(control)) {
-                this.element.html(el), new control(this.element.find('div'));
-            }
-        }
-    });
-});
-/*!
- * CanJS - 2.0.7
- * http://canjs.us/
- * Copyright (c) 2014 Bitovi
- * Wed, 26 Mar 2014 16:12:27 GMT
- * Licensed MIT
- * Includes: CanJS default build
- * Download from: http://canjs.us/
- */
-define('can/util/bind',["can/util/library"], function (can) {
-	/**
-	 * @typedef {{bind:function():*,unbind:function():*}} can/util/bind
-	 *
-	 * Provides mixin-able bind and unbind methods. `bind()` calls `this._bindsetup`
-	 * when the first bind happens and.  `unbind()` calls `this._bindteardown` when there
-	 * are no more event handlers.
-	 *
-	 */
-	// ## Bind helpers
-	can.bindAndSetup = function () {
-		// Add the event to this object
-		can.addEvent.apply(this, arguments);
-		// If not initializing, and the first binding
-		// call bindsetup if the function exists.
-		if (!this._init) {
-			if (!this._bindings) {
-				this._bindings = 1;
-				// setup live-binding
-				if (this._bindsetup) {
-					this._bindsetup();
-				}
-			} else {
-				this._bindings++;
-			}
-		}
-		return this;
-	};
-	can.unbindAndTeardown = function (ev, handler) {
-		// Remove the event handler
-		can.removeEvent.apply(this, arguments);
-		if (this._bindings === null) {
-			this._bindings = 0;
-		} else {
-			this._bindings--;
-		}
-		// If there are no longer any bindings and
-		// there is a bindteardown method, call it.
-		if (!this._bindings && this._bindteardown) {
-			this._bindteardown();
-		}
-		return this;
-	};
-	return can;
 });
 /*!
  * CanJS - 2.0.7
@@ -15276,6 +14358,8746 @@ define('can/list',["can/util/library", "can/map"], function (can, Map) {
  * Includes: CanJS default build
  * Download from: http://canjs.us/
  */
+define('can/model',["can/util/library", "can/map", "can/list"], function (can) {
+
+	// ## model.js  
+	// `can.Model`  
+	// _A `can.Map` that connects to a RESTful interface._
+	//  
+	// Generic deferred piping function
+	/**
+	 * @add can.Model
+	 */
+	var pipe = function (def, model, func) {
+		var d = new can.Deferred();
+		def.then(function () {
+			var args = can.makeArray(arguments),
+				success = true;
+			try {
+				args[0] = model[func](args[0]);
+			} catch (e) {
+				success = false;
+				d.rejectWith(d, [e].concat(args));
+			}
+			if (success) {
+				d.resolveWith(d, args);
+			}
+		}, function () {
+			d.rejectWith(this, arguments);
+		});
+
+		if (typeof def.abort === 'function') {
+			d.abort = function () {
+				return def.abort();
+			};
+		}
+
+		return d;
+	},
+		modelNum = 0,
+		getId = function (inst) {
+			// Instead of using attr, use __get for performance.
+			// Need to set reading
+			if (can.__reading) {
+				can.__reading(inst, inst.constructor.id);
+			}
+			return inst.__get(inst.constructor.id);
+		},
+		// Ajax `options` generator function
+		ajax = function (ajaxOb, data, type, dataType, success, error) {
+
+			var params = {};
+
+			// If we get a string, handle it.
+			if (typeof ajaxOb === 'string') {
+				// If there's a space, it's probably the type.
+				var parts = ajaxOb.split(/\s+/);
+				params.url = parts.pop();
+				if (parts.length) {
+					params.type = parts.pop();
+				}
+			} else {
+				can.extend(params, ajaxOb);
+			}
+
+			// If we are a non-array object, copy to a new attrs.
+			params.data = typeof data === "object" && !can.isArray(data) ?
+				can.extend(params.data || {}, data) : data;
+
+			// Get the url with any templated values filled out.
+			params.url = can.sub(params.url, params.data, true);
+
+			return can.ajax(can.extend({
+				type: type || 'post',
+				dataType: dataType || 'json',
+				success: success,
+				error: error
+			}, params));
+		},
+		makeRequest = function (self, type, success, error, method) {
+			var args;
+			// if we pass an array as `self` it it means we are coming from
+			// the queued request, and we're passing already serialized data
+			// self's signature will be: [self, serializedData]
+			if (can.isArray(self)) {
+				args = self[1];
+				self = self[0];
+			} else {
+				args = self.serialize();
+			}
+			args = [args];
+			var deferred,
+				// The model.
+				model = self.constructor,
+				jqXHR;
+
+			// `update` and `destroy` need the `id`.
+			if (type !== 'create') {
+				args.unshift(getId(self));
+			}
+
+			jqXHR = model[type].apply(model, args);
+
+			deferred = jqXHR.pipe(function (data) {
+				self[method || type + "d"](data, jqXHR);
+				return self;
+			});
+
+			// Hook up `abort`
+			if (jqXHR.abort) {
+				deferred.abort = function () {
+					jqXHR.abort();
+				};
+			}
+
+			deferred.then(success, error);
+			return deferred;
+		}, initializers = {
+			// makes a models function that looks up the data in a particular property
+			models: function (prop) {
+				return function (instancesRawData, oldList) {
+					// until "end of turn", increment reqs counter so instances will be added to the store
+					can.Model._reqs++;
+					if (!instancesRawData) {
+						return;
+					}
+
+					if (instancesRawData instanceof this.List) {
+						return instancesRawData;
+					}
+
+					// Get the list type.
+					var self = this,
+						tmp = [],
+						Cls = self.List || ML,
+						res = oldList instanceof can.List ? oldList : new Cls(),
+						// Did we get an `array`?
+						arr = can.isArray(instancesRawData),
+
+						// Did we get a model list?
+						ml = instancesRawData instanceof ML,
+						// Get the raw `array` of objects.
+						raw = arr ?
+
+						// If an `array`, return the `array`.
+						instancesRawData :
+
+						// Otherwise if a model list.
+						(ml ?
+
+							// Get the raw objects from the list.
+							instancesRawData.serialize() :
+
+							// Get the object's data.
+							can.getObject(prop || "data", instancesRawData));
+
+					if (typeof raw === 'undefined') {
+						throw new Error('Could not get any raw data while converting using .models');
+					}
+
+				
+
+					if (res.length) {
+						res.splice(0);
+					}
+
+					can.each(raw, function (rawPart) {
+						tmp.push(self.model(rawPart));
+					});
+
+					// We only want one change event so push everything at once
+					res.push.apply(res, tmp);
+
+					if (!arr) { // Push other stuff onto `array`.
+						can.each(instancesRawData, function (val, prop) {
+							if (prop !== 'data') {
+								res.attr(prop, val);
+							}
+						});
+					}
+					// at "end of turn", clean up the store
+					setTimeout(can.proxy(this._clean, this), 1);
+					return res;
+				};
+			},
+			model: function (prop) {
+				return function (attributes) {
+					if (!attributes) {
+						return;
+					}
+					if (typeof attributes.serialize === 'function') {
+						attributes = attributes.serialize();
+					}
+					if (prop) {
+						attributes = can.getObject(prop || 'data', attributes);
+					}
+
+					var id = attributes[this.id],
+						model = (id || id === 0) && this.store[id] ?
+							this.store[id].attr(attributes, this.removeAttr || false) : new this(attributes);
+
+					return model;
+				};
+			}
+		},
+
+		// This object describes how to make an ajax request for each ajax method.  
+		// The available properties are:
+		//		`url` - The default url to use as indicated as a property on the model.
+		//		`type` - The default http request type
+		//		`data` - A method that takes the `arguments` and returns `data` used for ajax.
+		/** 
+		 * @static
+		 */
+		//
+		/**
+		 * @function can.Model.bind bind
+		 * @parent can.Model.static
+		 * @description Listen for events on a Model class.
+		 *
+		 * @signature `can.Model.bind(eventType, handler)`
+		 * @param {String} eventType The type of event.  It must be
+		 * `"created"`, `"updated"`, `"destroyed"`.
+		 * @param {function} handler A callback function
+		 * that gets called with the event and instance that was
+		 * created, destroyed, or updated.
+		 * @return {can.Model} The model constructor function.
+		 *
+		 * @body
+		 * `bind(eventType, handler(event, instance))` listens to
+		 * __created__, __updated__, __destroyed__ events on all
+		 * instances of the model.
+		 *
+		 *     Task.bind("created", function(ev, createdTask){
+		 *      this //-> Task
+		 *       createdTask.attr("name") //-> "Dishes"
+		 *     })
+		 *
+		 *     new Task({name: "Dishes"}).save();
+		 */
+		// 
+		/**
+		 * @function can.Model.unbind unbind
+		 * @parent can.Model.static
+		 * @description Stop listening for events on a Model class.
+		 *
+		 * @signature `can.Model.unbind(eventType, handler)`
+		 * @param {String} eventType The type of event. It must be
+		 * `"created"`, `"updated"`, `"destroyed"`.
+		 * @param {function} handler A callback function
+		 * that was passed to `bind`.
+		 * @return {can.Model} The model constructor function.
+		 *
+		 * @body
+		 * `unbind(eventType, handler)` removes a listener
+		 * attached with [can.Model.bind].
+		 *
+		 *     var handler = function(ev, createdTask){
+		 *
+		 *     }
+		 *     Task.bind("created", handler)
+		 *     Task.unbind("created", handler)
+		 *
+		 * You have to pass the same function to `unbind` that you
+		 * passed to `bind`.
+		 */
+		// 
+		/**
+		 * @property {String} can.Model.id id
+		 * @parent can.Model.static
+		 * The name of the id field.  Defaults to `'id'`. Change this if it is something different.
+		 *
+		 * For example, it's common in .NET to use `'Id'`.  Your model might look like:
+		 *
+		 *     Friend = can.Model.extend({
+		 *       id: "Id"
+		 *     },{});
+		 */
+		/**
+		 * @property {Boolean} can.Model.removeAttr removeAttr
+		 * @parent can.Model.static
+		 * Sets whether model conversion should remove non existing attributes or merge with
+		 * the existing attributes. The default is `false`.
+		 * For example, if `Task.findOne({ id: 1 })` returns
+		 *
+		 *      { id: 1, name: 'Do dishes', index: 1, color: ['red', 'blue'] }
+		 *
+		 * for the first request and
+		 *
+		 *      { id: 1, name: 'Really do dishes', color: ['green'] }
+		 *
+		 *  for the next request, the actual model attributes would look like:
+		 *
+		 *      { id: 1, name: 'Really do dishes', index: 1, color: ['green', 'blue'] }
+		 *
+		 *  Because the attributes of the original model and the updated model will
+		 *  be merged. Setting `removeAttr` to `true` will result in model attributes like
+		 *
+		 *      { id: 1, name: 'Really do dishes', color: ['green'] }
+		 *
+		 */
+		ajaxMethods = {
+			/**
+			 * @description Specifies how to create a new resource on the server. `create(serialized)` is called
+			 * by [can.Model.prototype.save save] if the model instance [can.Model.prototype.isNew is new].
+			 * @function can.Model.create create
+			 * @parent can.Model.static
+			 *
+			 *
+			 * @signature `can.Model.create: function(serialized) -> deferred`
+			 *
+			 * Specify a function to create persistent instances. The function will
+			 * typically perform an AJAX request to a service that results in
+			 * creating a record in a database.
+			 *
+			 * @param {Object} serialized The [can.Map::serialize serialized] properties of
+			 * the model to create.
+			 * @return {can.Deferred} A Deferred that resolves to an object of attributes
+			 * that will be added to the created model instance.  The object __MUST__ contain
+			 * an [can.Model.id id] property so that future calls to [can.Model.prototype.save save]
+			 * will call [can.Model.update].
+			 *
+			 *
+			 * @signature `can.Model.create: "[METHOD] /path/to/resource"`
+			 *
+			 * Specify a HTTP method and url to create persistent instances.
+			 *
+			 * If you provide a URL, the Model will send a request to that URL using
+			 * the method specified (or POST if none is specified) when saving a
+			 * new instance on the server. (See below for more details.)
+			 *
+			 * @param {HttpMethod} METHOD An HTTP method. Defaults to `"POST"`.
+			 * @param {STRING} url The URL of the service to retrieve JSON data.
+			 *
+			 *
+			 * @signature `can.Model.create: {ajaxSettings}`
+			 *
+			 * Specify an options object that is used to make a HTTP request to create
+			 * persistent instances.
+			 *
+			 * @param {can.AjaxSettings} ajaxSettings A settings object that
+			 * specifies the options available to pass to [can.ajax].
+			 *
+			 * @body
+			 *
+			 * `create(attributes) -> Deferred` is used by [can.Model::save save] to create a
+			 * model instance on the server.
+			 *
+			 * ## Implement with a URL
+			 *
+			 * The easiest way to implement create is to give it the url
+			 * to post data to:
+			 *
+			 *     var Recipe = can.Model.extend({
+			 *       create: "/recipes"
+			 *     },{})
+			 *
+			 * This lets you create a recipe like:
+			 *
+			 *     new Recipe({name: "hot dog"}).save();
+			 *
+			 *
+			 * ## Implement with a Function
+			 *
+			 * You can also implement create by yourself. Create gets called
+			 * with `attrs`, which are the [can.Map::serialize serialized] model
+			 * attributes.  Create returns a `Deferred`
+			 * that contains the id of the new instance and any other
+			 * properties that should be set on the instance.
+			 *
+			 * For example, the following code makes a request
+			 * to `POST /recipes.json {'name': 'hot+dog'}` and gets back
+			 * something that looks like:
+			 *
+			 *     {
+			 *       "id": 5,
+			 *       "createdAt": 2234234329
+			 *     }
+			 *
+			 * The code looks like:
+			 *
+			 *     can.Model.extend("Recipe", {
+			 *       create : function( attrs ){
+			 *         return $.post("/recipes.json",attrs, undefined ,"json");
+			 *       }
+			 *     },{})
+			 */
+			create: {
+				url: "_shortName",
+				type: "post"
+			},
+			/**
+			 * @description Update a resource on the server.
+			 * @function can.Model.update update
+			 * @parent can.Model.static
+			 * @signature `can.Model.update: "[METHOD] /path/to/resource"`
+			 * If you provide a URL, the Model will send a request to that URL using
+			 * the method specified (or PUT if none is specified) when updating an
+			 * instance on the server. (See below for more details.)
+			 * @return {can.Deferred} A Deferred that resolves to the updated model.
+			 *
+			 * @signature `can.Model.update: function(id, serialized) -> can.Deffered`
+			 * If you provide a function, the Model will expect you to do your own AJAX requests.
+			 * @param {*} id The ID of the model to update.
+			 * @param {Object} serialized The [can.Map::serialize serialized] properties of
+			 * the model to update.
+			 * @return {can.Deferred} A Deferred that resolves to the updated model.
+			 *
+			 * @body
+			 * `update( id, attrs ) -> Deferred` is used by [can.Model::save save] to
+			 * update a model instance on the server.
+			 *
+			 * ## Implement with a URL
+			 *
+			 * The easist way to implement update is to just give it the url to `PUT` data to:
+			 *
+			 *     Recipe = can.Model.extend({
+			 *       update: "/recipes/{id}"
+			 *     },{});
+			 *
+			 * This lets you update a recipe like:
+			 *
+			 *     Recipe.findOne({id: 1}, function(recipe){
+			 *       recipe.attr('name','salad');
+			 *       recipe.save();
+			 *     })
+			 *
+			 * This will make an XHR request like:
+			 *
+			 *     PUT /recipes/1
+			 *     name=salad
+			 *
+			 * If your server doesn't use PUT, you can change it to post like:
+			 *
+			 *     Recipe = can.Model.extend({
+			 *       update: "POST /recipes/{id}"
+			 *     },{});
+			 *
+			 * The server should send back an object with any new attributes the model
+			 * should have.  For example if your server updates the "updatedAt" property, it
+			 * should send back something like:
+			 *
+			 *     // PUT /recipes/4 {name: "Food"} ->
+			 *     {
+			 *       updatedAt : "10-20-2011"
+			 *     }
+			 *
+			 * ## Implement with a Function
+			 *
+			 * You can also implement update by yourself.  Update takes the `id` and
+			 * `attributes` of the instance to be updated.  Update must return
+			 * a [can.Deferred Deferred] that resolves to an object that contains any
+			 * properties that should be set on the instance.
+			 *
+			 * For example, the following code makes a request
+			 * to '/recipes/5.json?name=hot+dog' and gets back
+			 * something that looks like:
+			 *
+			 *     {
+			 *       updatedAt: "10-20-2011"
+			 *     }
+			 *
+			 * The code looks like:
+			 *
+			 *     Recipe = can.Model.extend({
+			 *       update : function(id, attrs ) {
+			 *         return $.post("/recipes/"+id+".json",attrs, null,"json");
+			 *       }
+			 *     },{});
+			 */
+			update: {
+				data: function (id, attrs) {
+					attrs = attrs || {};
+					var identity = this.id;
+					if (attrs[identity] && attrs[identity] !== id) {
+						attrs["new" + can.capitalize(id)] = attrs[identity];
+						delete attrs[identity];
+					}
+					attrs[identity] = id;
+					return attrs;
+				},
+				type: "put"
+			},
+			/**
+			 * @description Destroy a resource on the server.
+			 * @function can.Model.destroy destroy
+			 * @parent can.Model.static
+			 *
+			 * @signature `can.Model.destroy: function(id) -> deferred`
+			 *
+			 *
+			 *
+			 * If you provide a function, the Model will expect you to do your own AJAX requests.
+			 * @param {*} id The ID of the resource to destroy.
+			 * @return {can.Deferred} A Deferred that resolves to the destroyed model.
+			 *
+			 *
+			 * @signature `can.Model.destroy: "[METHOD] /path/to/resource"`
+			 *
+			 * If you provide a URL, the Model will send a request to that URL using
+			 * the method specified (or DELETE if none is specified) when deleting an
+			 * instance on the server. (See below for more details.)
+			 *
+			 * @return {can.Deferred} A Deferred that resolves to the destroyed model.
+			 *
+			 *
+			 *
+			 * @body
+			 * `destroy(id) -> Deferred` is used by [can.Model::destroy] remove a model
+			 * instance from the server.
+			 *
+			 * ## Implement with a URL
+			 *
+			 * You can implement destroy with a string like:
+			 *
+			 *     Recipe = can.Model.extend({
+			 *       destroy : "/recipe/{id}"
+			 *     },{})
+			 *
+			 * And use [can.Model::destroy] to destroy it like:
+			 *
+			 *     Recipe.findOne({id: 1}, function(recipe){
+			 *          recipe.destroy();
+			 *     });
+			 *
+			 * This sends a `DELETE` request to `/thing/destroy/1`.
+			 *
+			 * If your server does not support `DELETE` you can override it like:
+			 *
+			 *     Recipe = can.Model.extend({
+			 *       destroy : "POST /recipe/destroy/{id}"
+			 *     },{})
+			 *
+			 * ## Implement with a function
+			 *
+			 * Implement destroy with a function like:
+			 *
+			 *     Recipe = can.Model.extend({
+			 *       destroy : function(id){
+			 *         return $.post("/recipe/destroy/"+id,{});
+			 *       }
+			 *     },{})
+			 *
+			 * Destroy just needs to return a deferred that resolves.
+			 */
+			destroy: {
+				type: 'delete',
+				data: function (id, attrs) {
+					attrs = attrs || {};
+					attrs.id = attrs[this.id] = id;
+					return attrs;
+				}
+			},
+			/**
+			 * @description Retrieve multiple resources from a server.
+			 * @function can.Model.findAll findAll
+			 * @parent can.Model.static
+			 *
+			 * @signature `can.Model.findAll( params[, success[, error]] )`
+			 *
+			 * Retrieve multiple resources from a server.
+			 *
+			 * @param {Object} params Values to filter the request or results with.
+			 * @param {function(can.Model.List)} [success(list)] A callback to call on successful retrieval. The callback recieves
+			 * a can.Model.List of the retrieved resources.
+			 * @param {function(can.AjaxSettings)} [error(xhr)] A callback to call when an error occurs. The callback receives the
+			 * XmlHttpRequest object.
+			 * @return {can.Deferred} A deferred that resolves to a [can.Model.List] of retrieved models.
+			 *
+			 *
+			 * @signature `can.Model.findAll: findAllData( params ) -> deferred`
+			 *
+			 * Implements `findAll` with a [can.Model.findAllData function]. This function
+			 * is passed to [can.Model.makeFindAll makeFindAll] to create the external
+			 * `findAll` method.
+			 *
+			 *     findAll: function(params){
+			 *       return $.get("/tasks",params)
+			 *     }
+			 *
+			 * @param {can.Model.findAllData} findAllData A function that accepts parameters
+			 * specifying a list of instance data to retrieve and returns a [can.Deferred]
+			 * that resolves to an array of those instances.
+			 *
+			 * @signature `can.Model.findAll: "[METHOD] /path/to/resource"`
+			 *
+			 * Implements `findAll` with a HTTP method and url to retrieve instance data.
+			 *
+			 *     findAll: "GET /tasks"
+			 *
+			 * If `findAll` is implemented with a string, this gets converted to
+			 * a [can.Model.findAllData findAllData function]
+			 * which is passed to [can.Model.makeFindAll makeFindAll] to create the external
+			 * `findAll` method.
+			 *
+			 * @param {HttpMethod} METHOD An HTTP method. Defaults to `"GET"`.
+			 *
+			 * @param {STRING} url The URL of the service to retrieve JSON data.
+			 *
+			 * @return {JSON} The service should return a JSON object like:
+			 *
+			 *     {
+			 *       "data": [
+			 *         { "id" : 1, "name" : "do the dishes" },
+			 *         { "id" : 2, "name" : "mow the lawn" },
+			 *         { "id" : 3, "name" : "iron my shirts" }
+			 *       ]
+			 *     }
+			 *
+			 * This object is passed to [can.Model.models] to turn it into instances.
+			 *
+			 * _Note: .findAll can also accept an array, but you
+			 * probably [should not be doing that](http://haacked.com/archive/2008/11/20/anatomy-of-a-subtle-json-vulnerability.aspx)._
+			 *
+			 *
+			 * @signature `can.Model.findAll: {ajaxSettings}`
+			 *
+			 * Implements `findAll` with a [can.AjaxSettings ajax settings object].
+			 *
+			 *     findAll: {url: "/tasks", dataType: "json"}
+			 *
+			 * If `findAll` is implemented with an object, it gets converted to
+			 * a [can.Model.findAllData findAllData function]
+			 * which is passed to [can.Model.makeFindAll makeFindAll] to create the external
+			 * `findAll` method.
+			 *
+			 * @param {can.AjaxSettings} ajaxSettings A settings object that
+			 * specifies the options available to pass to [can.ajax].
+			 *
+			 * @body
+			 *
+			 * ## Use
+			 *
+			 * `findAll( params, success(instances), error(xhr) ) -> Deferred` is used to retrieve model
+			 * instances from the server. After implementing `findAll`, use it to retrieve instances of the model
+			 * like:
+			 *
+			 *     Recipe.findAll({favorite: true}, function(recipes){
+			 *       recipes[0].attr('name') //-> "Ice Water"
+			 *     }, function( xhr ){
+			 *       // called if an error
+			 *     }) //-> Deferred
+			 *
+			 *
+			 * Before you can use `findAll`, you must implement it.
+			 *
+			 * ## Implement with a URL
+			 *
+			 * Implement findAll with a url like:
+			 *
+			 *     Recipe = can.Model.extend({
+			 *       findAll : "/recipes.json"
+			 *     },{});
+			 *
+			 * The server should return data that looks like:
+			 *
+			 *     [
+			 *       {"id" : 57, "name": "Ice Water"},
+			 *       {"id" : 58, "name": "Toast"}
+			 *     ]
+			 *
+			 * ## Implement with an Object
+			 *
+			 * Implement findAll with an object that specifies the parameters to
+			 * `can.ajax` (jQuery.ajax) like:
+			 *
+			 *     Recipe = can.Model.extend({
+			 *       findAll : {
+			 *         url: "/recipes.xml",
+			 *         dataType: "xml"
+			 *       }
+			 *     },{})
+			 *
+			 * ## Implement with a Function
+			 *
+			 * To implement with a function, `findAll` is passed __params__ to filter
+			 * the instances retrieved from the server and it should return a
+			 * deferred that resolves to an array of model data. For example:
+			 *
+			 *     Recipe = can.Model.extend({
+			 *       findAll : function(params){
+			 *         return $.ajax({
+			 *           url: '/recipes.json',
+			 *           type: 'get',
+			 *           dataType: 'json'})
+			 *       }
+			 *     },{})
+			 *
+			 */
+			findAll: {
+				url: "_shortName"
+			},
+			/**
+			 * @description Retrieve a resource from a server.
+			 * @function can.Model.findOne findOne
+			 * @parent can.Model.static
+			 *
+			 * @signature `can.Model.findOne( params[, success[, error]] )`
+			 *
+			 * Retrieve a single instance from the server.
+			 *
+			 * @param {Object} params Values to filter the request or results with.
+			 * @param {function(can.Model)} [success(model)] A callback to call on successful retrieval. The callback recieves
+			 * the retrieved resource as a can.Model.
+			 * @param {function(can.AjaxSettings)} [error(xhr)] A callback to call when an error occurs. The callback receives the
+			 * XmlHttpRequest object.
+			 * @return {can.Deferred} A deferred that resolves to a [can.Model.List] of retrieved models.
+			 *
+			 * @signature `can.Model.findOne: findOneData( params ) -> deferred`
+			 *
+			 * Implements `findOne` with a [can.Model.findOneData function]. This function
+			 * is passed to [can.Model.makeFindOne makeFindOne] to create the external
+			 * `findOne` method.
+			 *
+			 *     findOne: function(params){
+			 *       return $.get("/task/"+params.id)
+			 *     }
+			 *
+			 * @param {can.Model.findOneData} findOneData A function that accepts parameters
+			 * specifying an instance to retreive and returns a [can.Deferred]
+			 * that resolves to that instance.
+			 *
+			 * @signature `can.Model.findOne: "[METHOD] /path/to/resource"`
+			 *
+			 * Implements `findOne` with a HTTP method and url to retrieve an instance's data.
+			 *
+			 *     findOne: "GET /tasks/{id}"
+			 *
+			 * If `findOne` is implemented with a string, this gets converted to
+			 * a [can.Model.makeFindOne makeFindOne function]
+			 * which is passed to [can.Model.makeFindOne makeFindOne] to create the external
+			 * `findOne` method.
+			 *
+			 * @param {HttpMethod} METHOD An HTTP method. Defaults to `"GET"`.
+			 *
+			 * @param {STRING} url The URL of the service to retrieve JSON data.
+			 *
+			 * @signature `can.Model.findOne: {ajaxSettings}`
+			 *
+			 * Implements `findOne` with a [can.AjaxSettings ajax settings object].
+			 *
+			 *     findOne: {url: "/tasks/{id}", dataType: "json"}
+			 *
+			 * If `findOne` is implemented with an object, it gets converted to
+			 * a [can.Model.makeFindOne makeFindOne function]
+			 * which is passed to [can.Model.makeFindOne makeFindOne] to create the external
+			 * `findOne` method.
+			 *
+			 * @param {can.AjaxSettings} ajaxSettings A settings object that
+			 * specifies the options available to pass to [can.ajax].
+			 *
+			 * @body
+			 *
+			 * ## Use
+			 *
+			 * `findOne( params, success(instance), error(xhr) ) -> Deferred` is used to retrieve a model
+			 * instance from the server.
+			 *
+			 * Use `findOne` like:
+			 *
+			 *     Recipe.findOne({id: 57}, function(recipe){
+			 *      recipe.attr('name') //-> "Ice Water"
+			 *     }, function( xhr ){
+			 *      // called if an error
+			 *     }) //-> Deferred
+			 *
+			 * Before you can use `findOne`, you must implement it.
+			 *
+			 * ## Implement with a URL
+			 *
+			 * Implement findAll with a url like:
+			 *
+			 *     Recipe = can.Model.extend({
+			 *       findOne : "/recipes/{id}.json"
+			 *     },{});
+			 *
+			 * If `findOne` is called like:
+			 *
+			 *     Recipe.findOne({id: 57});
+			 *
+			 * The server should return data that looks like:
+			 *
+			 *     {"id" : 57, "name": "Ice Water"}
+			 *
+			 * ## Implement with an Object
+			 *
+			 * Implement `findOne` with an object that specifies the parameters to
+			 * `can.ajax` (jQuery.ajax) like:
+			 *
+			 *     Recipe = can.Model.extend({
+			 *       findOne : {
+			 *         url: "/recipes/{id}.xml",
+			 *         dataType: "xml"
+			 *       }
+			 *     },{})
+			 *
+			 * ## Implement with a Function
+			 *
+			 * To implement with a function, `findOne` is passed __params__ to specify
+			 * the instance retrieved from the server and it should return a
+			 * deferred that resolves to the model data.  Also notice that you now need to
+			 * build the URL manually. For example:
+			 *
+			 *     Recipe = can.Model.extend({
+			 *       findOne : function(params){
+			 *         return $.ajax({
+			 *           url: '/recipes/' + params.id,
+			 *           type: 'get',
+			 *           dataType: 'json'})
+			 *       }
+			 *     },{})
+			 *
+			 *
+			 */
+			findOne: {}
+		},
+		// Makes an ajax request `function` from a string.
+		//		`ajaxMethod` - The `ajaxMethod` object defined above.
+		//		`str` - The string the user provided. Ex: `findAll: "/recipes.json"`.
+		ajaxMaker = function (ajaxMethod, str) {
+			// Return a `function` that serves as the ajax method.
+			return function (data) {
+				// If the ajax method has it's own way of getting `data`, use that.
+				data = ajaxMethod.data ?
+					ajaxMethod.data.apply(this, arguments) :
+				// Otherwise use the data passed in.
+				data;
+				// Return the ajax method with `data` and the `type` provided.
+				return ajax(str || this[ajaxMethod.url || "_url"], data, ajaxMethod.type || "get");
+			};
+		};
+
+	can.Model = can.Map({
+			fullName: 'can.Model',
+			_reqs: 0,
+			/**
+			 * @hide
+			 * @function can.Model.setup
+			 * @parent can.Model.static
+			 *
+			 * Configures
+			 *
+			 */
+			setup: function (base) {
+				// create store here if someone wants to use model without inheriting from it
+				this.store = {};
+				can.Map.setup.apply(this, arguments);
+				// Set default list as model list
+				if (!can.Model) {
+					return;
+				}
+				/**
+				 * @property {can.Model.List} can.Model.static.List List
+				 * @parent can.Model.static
+				 *
+				 * @description Specifies the type of List that [can.Model.findAll findAll]
+				 * should return.
+				 *
+				 * @option {can.Model.List} A can.Model's List property is the
+				 * type of [can.List List] returned
+				 * from [can.Model.findAll findAll]. For example:
+				 *
+				 *     Task = can.Model.extend({
+				 *       findAll: "/tasks"
+				 *     },{})
+				 *
+				 *     Task.findAll({}, function(tasks){
+				 *       tasks instanceof Task.List //-> true
+				 *     })
+				 *
+				 * Overwrite a Model's `List` property to add custom
+				 * behavior to the lists provided to `findAll` like:
+				 *
+				 *     Task = can.Model.extend({
+				 *       findAll: "/tasks"
+				 *     },{})
+				 *     Task.List = Task.List.extend({
+				 *       completed: function(){
+				 *         var count = 0;
+				 *         this.each(function(task){
+				 *           if( task.attr("completed") ) count++;
+				 *         })
+				 *         return count;
+				 *       }
+				 *     })
+				 *
+				 *     Task.findAll({}, function(tasks){
+				 *       tasks.completed() //-> 3
+				 *     })
+				 *
+				 * When [can.Model] is extended,
+				 * [can.Model.List] is extended and set as the extended Model's
+				 * `List` property. The extended list's [can.List.Map Map] property
+				 * is set to the extended Model.  For example:
+				 *
+				 *     Task = can.Model.extend({
+				 *       findAll: "/tasks"
+				 *     },{})
+				 *     Task.List.Map //-> Task
+				 *
+				 */
+				this.List = ML({
+					Map: this
+				}, {});
+				var self = this,
+					clean = can.proxy(this._clean, self);
+
+				// go through ajax methods and set them up
+				can.each(ajaxMethods, function (method, name) {
+					// if an ajax method is not a function, it's either
+					// a string url like findAll: "/recipes" or an
+					// ajax options object like {url: "/recipes"}
+					if (!can.isFunction(self[name])) {
+						// use ajaxMaker to convert that into a function
+						// that returns a deferred with the data
+						self[name] = ajaxMaker(method, self[name]);
+					}
+					// check if there's a make function like makeFindAll
+					// these take deferred function and can do special
+					// behavior with it (like look up data in a store)
+					if (self['make' + can.capitalize(name)]) {
+						// pass the deferred method to the make method to get back
+						// the "findAll" method.
+						var newMethod = self['make' + can.capitalize(name)](self[name]);
+						can.Construct._overwrite(self, base, name, function () {
+							// increment the numer of requests
+							can.Model._reqs++;
+							var def = newMethod.apply(this, arguments);
+							var then = def.then(clean, clean);
+							then.abort = def.abort;
+
+							// attach abort to our then and return it
+							return then;
+						});
+					}
+				});
+				can.each(initializers, function (makeInitializer, name) {
+					if (typeof self[name] === 'string') {
+						can.Construct._overwrite(self, base, name, makeInitializer(self[name]));
+					}
+				});
+				if (self.fullName === 'can.Model' || !self.fullName) {
+					modelNum++;
+					self.fullName = 'Model' + modelNum;
+				}
+				// Add ajax converters.
+				can.Model._reqs = 0;
+				this._url = this._shortName + '/{' + this.id + '}';
+			},
+			_ajax: ajaxMaker,
+			_makeRequest: makeRequest,
+			_clean: function () {
+				can.Model._reqs--;
+				if (!can.Model._reqs) {
+					for (var id in this.store) {
+						if (!this.store[id]._bindings) {
+							delete this.store[id];
+						}
+					}
+				}
+				return arguments[0];
+			},
+			/**
+			 * @function can.Model.models models
+			 * @parent can.Model.static
+			 * @description Convert raw data into can.Model instances.
+			 *
+			 * @signature `can.Model.models(data[, oldList])`
+			 * @param {Array<Object>} data The raw data from a `[can.Model.findAll findAll()]` request.
+			 * @param {can.Model.List} [oldList] If supplied, this List will be updated with the data from
+			 * __data__.
+			 * @return {can.Model.List} A List of Models made from the raw data.
+			 *
+			 * @signature `models: "PROPERTY"`
+			 *
+			 * Creates a `models` function that looks for the array of instance data in the PROPERTY
+			 * property of the raw response data of [can.Model.findAll].
+			 *
+			 * @body
+			 * `can.Model.models(data, xhr)` is used to
+			 * convert the raw response of a [can.Model.findAll] request
+			 * into a [can.Model.List] of model instances.
+			 *
+			 * This method is rarely called directly. Instead the deferred returned
+			 * by findAll is piped into `models`.  This creates a new deferred that
+			 * resolves to a [can.Model.List] of instances instead of an array of
+			 * simple JS objects.
+			 *
+			 * If your server is returning data in non-standard way,
+			 * overwriting `can.Model.models` is the best way to normalize it.
+			 *
+			 * ## Quick Example
+			 *
+			 * The following uses models to convert to a [can.Model.List] of model
+			 * instances.
+			 *
+			 *     Task = can.Model.extend()
+			 *     var tasks = Task.models([
+			 *       {id: 1, name : "dishes", complete : false},
+			 *       {id: 2, name: "laundry", compelte: true}
+			 *     ])
+			 *
+			 *     tasks.attr("0.complete", true)
+			 *
+			 * ## Non-standard Services
+			 *
+			 * `can.Model.models` expects data to be an array of name-value pair
+			 * objects like:
+			 *
+			 *     [{id: 1, name : "dishes"},{id:2, name: "laundry"}, ...]
+			 *
+			 * It can also take an object with additional data about the array like:
+			 *
+			 *     {
+			 *       count: 15000 //how many total items there might be
+			 *       data: [{id: 1, name : "justin"},{id:2, name: "brian"}, ...]
+			 *     }
+			 *
+			 * In this case, models will return a [can.Model.List] of instances found in
+			 * data, but with additional properties as expandos on the list:
+			 *
+			 *     var tasks = Task.models({
+			 *       count : 1500,
+			 *       data : [{id: 1, name: 'dishes'}, ...]
+			 *     })
+			 *     tasks.attr("name") // -> 'dishes'
+			 *     tasks.count // -> 1500
+			 *
+			 * ### Overwriting Models
+			 *
+			 * If your service returns data like:
+			 *
+			 *     {thingsToDo: [{name: "dishes", id: 5}]}
+			 *
+			 * You will want to overwrite models to pass the base models what it expects like:
+			 *
+			 *     Task = can.Model.extend({
+			 *       models : function(data){
+			 *         return can.Model.models.call(this,data.thingsToDo);
+			 *       }
+			 *     },{})
+			 *
+			 * `can.Model.models` passes each instance's data to `can.Model.model` to
+			 * create the individual instances.
+			 */
+			models: initializers.models("data"),
+			/**
+			 * @function can.Model.model model
+			 * @parent can.Model.static
+			 * @description Convert raw data into a can.Model instance.
+			 * @signature `can.Model.model(data)`
+			 * @param {Object} data The data to convert to a can.Model instance.
+			 * @return {can.Model} An instance of can.Model made with the given data.
+			 *
+			 * @signature `model: "PROPERTY"`
+			 *
+			 * Creates a `model` function that looks for the attributes object in the PROPERTY
+			 * property of raw instance data.
+			 *
+			 * @body
+			 * `can.Model.model(attributes)` is used to convert data from the server into
+			 * a model instance.  It is rarely called directly.  Instead it is invoked as
+			 * a result of [can.Model.findOne] or [can.Model.findAll].
+			 *
+			 * If your server is returning data in non-standard way,
+			 * overwriting `can.Model.model` is a good way to normalize it.
+			 *
+			 * ## Example
+			 *
+			 * The following uses `model` to convert to a model
+			 * instance.
+			 *
+			 *     Task = can.Model.extend({},{})
+			 *     var task = Task.model({id: 1, name : "dishes", complete : false})
+			 *
+			 *     tasks.attr("complete", true)
+			 *
+			 * `Task.model(attrs)` is very similar to simply calling `new Model(attrs)` except
+			 * that it checks the model's store if the instance has already been created.  The model's
+			 * store is a collection of instances that have event handlers.
+			 *
+			 * This means that if the model's store already has an instance, you'll get the same instance
+			 * back.  Example:
+			 *
+			 *     // create a task
+			 *     var taskA = new Task({id: 5, complete: true});
+			 *
+			 *     // bind to it, which puts it in the store
+			 *      taskA.bind("complete", function(){});
+			 *
+			 *     // use model to create / retrieve a task
+			 *     var taskB = Task.model({id: 5, complete: true});
+			 *
+			 *     taskA === taskB //-> true
+			 *
+			 * ## Non-standard Services
+			 *
+			 * `can.Model.model` expects to retreive attributes of the model
+			 * instance like:
+			 *
+			 *
+			 *     {id: 5, name : "dishes"}
+			 *
+			 *
+			 * If the service returns data formatted differently, like:
+			 *
+			 *     {todo: {name: "dishes", id: 5}}
+			 *
+			 * Overwrite `model` like:
+			 *
+			 *     Task = can.Model.extend({
+			 *       model : function(data){
+			 *         return can.Model.model.call(this,data.todo);
+			 *       }
+			 *     },{});
+			 */
+			model: initializers.model()
+		},
+
+		/**
+		 * @prototype
+		 */
+		{
+			setup: function (attrs) {
+				// try to add things as early as possible to the store (#457)
+				// we add things to the store before any properties are even set
+				var id = attrs && attrs[this.constructor.id];
+				if (can.Model._reqs && id !== null) {
+					this.constructor.store[id] = this;
+				}
+				can.Map.prototype.setup.apply(this, arguments);
+			},
+			/**
+			 * @function can.Model.prototype.isNew isNew
+			 * @description Check if a Model has yet to be saved on the server.
+			 * @signature `model.isNew()`
+			 * @return {Boolean} Whether an instance has been saved on the server.
+			 * (This is determined by whether `id` has a value set yet.)
+			 *
+			 * @body
+			 * `isNew()` returns if the instance is has been created
+			 * on the server. This is essentially if the [can.Model.id]
+			 * property is null or undefined.
+			 *
+			 *     new Recipe({id: 1}).isNew() //-> false
+			 */
+			isNew: function () {
+				var id = getId(this);
+				return !(id || id === 0); // If `null` or `undefined`
+			},
+			/**
+			 * @function can.Model.prototype.save save
+			 * @description Save a model back to the server.
+			 * @signature `model.save([success[, error]])`
+			 * @param {function} [success] A callback to call on successful save. The callback recieves
+			 * the can.Model after saving.
+			 * @param {function} [error] A callback to call when an error occurs. The callback receives the
+			 * XmlHttpRequest object.
+			 * @return {can.Deferred} A Deferred that resolves to the Model after it has been saved.
+			 *
+			 * @body
+			 * `model.save([success(model)],[error(xhr)])` creates or updates
+			 * the model instance using [can.Model.create] or
+			 * [can.Model.update] depending if the instance
+			 * [can.Model::isNew has an id or not].
+			 *
+			 * ## Using `save` to create an instance.
+			 *
+			 * If `save` is called on an instance that does not have
+			 * an [can.Model.id id] property, it calls [can.Model.create]
+			 * with the instance's properties.  It also [can.trigger triggers]
+			 * a "created" event on the instance and the model.
+			 *
+			 *     // create a model instance
+			 *     var todo = new Todo({name: "dishes"})
+			 *
+			 *     // listen when the instance is created
+			 *     todo.bind("created", function(ev){
+			 *      this //-> todo
+			 *     })
+			 *
+			 *     // save it on the server
+			 *     todo.save(function(todo){
+			 *      console.log("todo", todo, "created")
+			 *     });
+			 *
+			 * ## Using `save` to update an instance.
+			 *
+			 * If save is called on an instance that has
+			 * an [can.Model.id id] property, it calls [can.Model.create]
+			 * with the instance's properties.  When the save is complete,
+			 * it triggers an "updated" event on the instance and the instance's model.
+			 *
+			 * Instances with an
+			 * __id__ are typically retrieved with [can.Model.findAll] or
+			 * [can.Model.findOne].
+			 *
+			 *
+			 *     // get a created model instance
+			 *     Todo.findOne({id: 5},function(todo){
+			 *
+			 *       // listen when the instance is updated
+			 *       todo.bind("updated", function(ev){
+			 *          this //-> todo
+			 *       })
+			 *
+			 *       // update the instance's property
+			 *       todo.attr("complete", true)
+			 *
+			 *       // save it on the server
+			 *       todo.save(function(todo){
+			 *          console.log("todo", todo, "updated")
+			 *       });
+			 *
+			 *     });
+			 *
+			 */
+			save: function (success, error) {
+				return makeRequest(this, this.isNew() ? 'create' : 'update', success, error);
+			},
+			/**
+			 * @function can.Model.prototype.destroy destroy
+			 * @description Destroy a Model on the server.
+			 * @signature `model.destroy([success[, error]])`
+			 * @param {function} [success] A callback to call on successful destruction. The callback recieves
+			 * the can.Model as it was just prior to destruction.
+			 * @param {function} [error] A callback to call when an error occurs. The callback receives the
+			 * XmlHttpRequest object.
+			 * @return {can.Deferred} A Deferred that resolves to the Model as it was before destruction.
+			 *
+			 * @body
+			 * Destroys the instance by calling
+			 * [Can.Model.destroy] with the id of the instance.
+			 *
+			 *     recipe.destroy(success, error);
+			 *
+			 * This triggers "destroyed" events on the instance and the
+			 * Model constructor function which can be listened to with
+			 * [can.Model::bind] and [can.Model.bind].
+			 *
+			 *     Recipe = can.Model.extend({
+			 *       destroy : "DELETE /services/recipes/{id}",
+			 *       findOne : "/services/recipes/{id}"
+			 *     },{})
+			 *
+			 *     Recipe.bind("destroyed", function(){
+			 *       console.log("a recipe destroyed");
+			 *     });
+			 *
+			 *     // get a recipe
+			 *     Recipe.findOne({id: 5}, function(recipe){
+			 *       recipe.bind("destroyed", function(){
+			 *         console.log("this recipe destroyed")
+			 *       })
+			 *       recipe.destroy();
+			 *     })
+			 */
+			destroy: function (success, error) {
+				if (this.isNew()) {
+					var self = this;
+					var def = can.Deferred();
+					def.then(success, error);
+					return def.done(function (data) {
+						self.destroyed(data);
+					})
+						.resolve(self);
+				}
+				return makeRequest(this, 'destroy', success, error, 'destroyed');
+			},
+			/**
+			 * @description Listen to events on this Model.
+			 * @function can.Model.prototype.bind bind
+			 * @signature `model.bind(eventName, handler)`
+			 * @param {String} eventName The event to bind to.
+			 * @param {function} handler The function to call when the
+			 * event occurs. __handler__ is passed the event and the
+			 * Model instance.
+			 * @return {can.Model} The Model, for chaining.
+			 *
+			 * @body
+			 * `bind(eventName, handler(ev, args...) )` is used to listen
+			 * to events on this model instance.  Example:
+			 *
+			 *     Task = can.Model.extend()
+			 *     var task = new Task({name : "dishes"})
+			 *     task.bind("name", function(ev, newVal, oldVal){})
+			 *
+			 * Use `bind` the
+			 * same as [can.Map::bind] which should be used as
+			 * a reference for listening to property changes.
+			 *
+			 * Bind on model can be used to listen to when
+			 * an instance is:
+			 *
+			 *  - created
+			 *  - updated
+			 *  - destroyed
+			 *
+			 * like:
+			 *
+			 *     Task = can.Model.extend()
+			 *     var task = new Task({name : "dishes"})
+			 *
+			 *     task.bind("created", function(ev, newTask){
+			 *      console.log("created", newTask)
+			 *     })
+			 *     .bind("updated", function(ev, updatedTask){
+			 *       console.log("updated", updatedTask)
+			 *     })
+			 *     .bind("destroyed", function(ev, destroyedTask){
+			 *       console.log("destroyed", destroyedTask)
+			 *     })
+			 *
+			 *     // create, update, and destroy
+			 *     task.save(function(){
+			 *       task.attr('name', "do dishes")
+			 *           .save(function(){
+			 *       task.destroy()
+			 *           })
+			 *     });
+			 *
+			 *
+			 * `bind` also extends the inherited
+			 * behavior of [can.Map::bind] to track the number
+			 * of event bindings on this object which is used to store
+			 * the model instance.  When there are no bindings, the
+			 * model instance is removed from the store, freeing memory.
+			 */
+			_bindsetup: function () {
+				this.constructor.store[this.__get(this.constructor.id)] = this;
+				return can.Map.prototype._bindsetup.apply(this, arguments);
+			},
+			/**
+			 * @function can.Model.prototype.unbind unbind
+			 * @description Stop listening to events on this Model.
+			 * @signature `model.unbind(eventName[, handler])`
+			 * @param {String} eventName The event to unbind from.
+			 * @param {function} [handler] A handler previously bound with `bind`.
+			 * If __handler__ is not passed, `unbind` will remove all handlers
+			 * for the given event.
+			 * @return {can.Model} The Model, for chaining.
+			 *
+			 * @body
+			 * `unbind(eventName, handler)` removes a listener
+			 * attached with [can.Model::bind].
+			 *
+			 *     var handler = function(ev, createdTask){
+			 *
+			 *     }
+			 *     task.bind("created", handler)
+			 *     task.unbind("created", handler)
+			 *
+			 * You have to pass the same function to `unbind` that you
+			 * passed to `bind`.
+			 *
+			 * Unbind will also remove the instance from the store
+			 * if there are no other listeners.
+			 */
+			_bindteardown: function () {
+				delete this.constructor.store[getId(this)];
+				return can.Map.prototype._bindteardown.apply(this, arguments);
+			},
+			// Change `id`.
+			___set: function (prop, val) {
+				can.Map.prototype.___set.call(this, prop, val);
+				// If we add an `id`, move it to the store.
+				if (prop === this.constructor.id && this._bindings) {
+					this.constructor.store[getId(this)] = this;
+				}
+			}
+		});
+
+	can.each({
+		/**
+		 * @function can.Model.makeFindAll
+		 * @parent can.Model.static
+		 *
+		 * @signature `can.Model.makeFindAll: function(findAllData) -> findAll`
+		 *
+		 * Returns the external `findAll` method given the implemented [can.Model.findAllData findAllData] function.
+		 *
+		 * @params {can.Model.findAllData}
+		 *
+		 * [can.Model.findAll] is implemented with a `String`, [can.AjaxSettings ajax settings object], or
+		 * [can.Model.findAllData findAllData] function. If it is implemented as
+		 * a `String` or [can.AjaxSettings ajax settings object], those values are used
+		 * to create a [can.Model.findAllData findAllData] function.
+		 *
+		 * The [can.Model.findAllData findAllData] function is passed to `makeFindAll`. `makeFindAll`
+		 * should use `findAllData` internally to get the raw data for the request.
+		 *
+		 * @return {function(params,success,error):can.Deferred}
+		 *
+		 * Returns function that implements the external API of `findAll`.
+		 *
+		 * @body
+		 *
+		 * ## Use
+		 *
+		 * `makeFindAll` can be used to implement base models that perform special
+		 * behavior. `makeFindAll` is passed a [can.Model.findAllData findAllData] function that retrieves raw
+		 * data. It should return a function that when called, uses
+		 * the findAllData function to get the raw data, convert them to model instances with
+		 * [can.Model.models models].
+		 *
+		 * ## Caching
+		 *
+		 * The following uses `makeFindAll` to create a base `CachedModel`:
+		 *
+		 *     CachedModel = can.Model.extend({
+		 *       makeFindAll: function(findAllData){
+		 *         // A place to store requests
+		 *         var cachedRequests = {};
+		 *
+		 *         return function(params, success, error){
+		 *           // is this not cached?
+		 *           if(! cachedRequests[JSON.stringify(params)] ) {
+		 *             var self = this;
+		 *             // make the request for data, save deferred
+		 *             cachedRequests[JSON.stringify(params)] =
+		 *               findAllData(params).then(function(data){
+		 *                 // convert the raw data into instances
+		 *                 return self.models(data)
+		 *               })
+		 *           }
+		 *           // get the saved request
+		 *           var def = cachedRequests[JSON.stringify(params)]
+		 *           // hookup success and error
+		 *           def.then(success,error)
+		 *           return def;
+		 *         }
+		 *       }
+		 *     },{})
+		 *
+		 * The following Todo model will never request the same list of todo's twice:
+		 *
+		 *     Todo = CachedModel({
+		 *       findAll: "/todos"
+		 *     },{})
+		 *
+		 *     // widget 1
+		 *     Todo.findAll({})
+		 *
+		 *     // widget 2
+		 *     Todo.findAll({})
+		 */
+		makeFindAll: "models",
+		/**
+		 * @function can.Model.makeFindOne
+		 * @parent can.Model.static
+		 *
+		 * @signature `can.Model.makeFindOne: function(findOneData) -> findOne`
+		 *
+		 * Returns the external `findOne` method given the implemented [can.Model.findOneData findOneData] function.
+		 *
+		 * @params {can.Model.findOneData}
+		 *
+		 * [can.Model.findOne] is implemented with a `String`, [can.AjaxSettings ajax settings object], or
+		 * [can.Model.findOneData findOneData] function. If it is implemented as
+		 * a `String` or [can.AjaxSettings ajax settings object], those values are used
+		 * to create a [can.Model.findOneData findOneData] function.
+		 *
+		 * The [can.Model.findOneData findOneData] function is passed to `makeFindOne`. `makeFindOne`
+		 * should use `findOneData` internally to get the raw data for the request.
+		 *
+		 * @return {function(params,success,error):can.Deferred}
+		 *
+		 * Returns function that implements the external API of `findOne`.
+		 *
+		 * @body
+		 *
+		 * ## Use
+		 *
+		 * `makeFindOne` can be used to implement base models that perform special
+		 * behavior. `makeFindOne` is passed a [can.Model.findOneData findOneData] function that retrieves raw
+		 * data. It should return a function that when called, uses
+		 * the findOneData function to get the raw data, convert them to model instances with
+		 * [can.Model.models models].
+		 *
+		 * ## Caching
+		 *
+		 * The following uses `makeFindOne` to create a base `CachedModel`:
+		 *
+		 *     CachedModel = can.Model.extend({
+		 *       makeFindOne: function(findOneData){
+		 *         // A place to store requests
+		 *         var cachedRequests = {};
+		 *
+		 *         return function(params, success, error){
+		 *           // is this not cached?
+		 *           if(! cachedRequests[JSON.stringify(params)] ) {
+		 *             var self = this;
+		 *             // make the request for data, save deferred
+		 *             cachedRequests[JSON.stringify(params)] =
+		 *               findOneData(params).then(function(data){
+		 *                 // convert the raw data into instances
+		 *                 return self.model(data)
+		 *               })
+		 *           }
+		 *           // get the saved request
+		 *           var def = cachedRequests[JSON.stringify(params)]
+		 *           // hookup success and error
+		 *           def.then(success,error)
+		 *           return def;
+		 *         }
+		 *       }
+		 *     },{})
+		 *
+		 * The following Todo model will never request the same todo twice:
+		 *
+		 *     Todo = CachedModel({
+		 *       findOne: "/todos/{id}"
+		 *     },{})
+		 *
+		 *     // widget 1
+		 *     Todo.findOne({id: 5})
+		 *
+		 *     // widget 2
+		 *     Todo.findOne({id: 5})
+		 */
+		makeFindOne: "model",
+		makeCreate: "model",
+		makeUpdate: "model"
+	}, function (method, name) {
+		can.Model[name] = function (oldMethod) {
+			return function () {
+				var args = can.makeArray(arguments),
+					oldArgs = can.isFunction(args[1]) ? args.splice(0, 1) : args.splice(0, 2),
+					def = pipe(oldMethod.apply(this, oldArgs), this, method);
+				def.then(args[0], args[1]);
+				// return the original promise
+				return def;
+			};
+		};
+	});
+
+	can.each([
+		/**
+		 * @function can.Model.prototype.created created
+		 * @hide
+		 * Called by save after a new instance is created.  Publishes 'created'.
+		 * @param {Object} attrs
+		 */
+		"created",
+		/**
+		 * @function can.Model.prototype.updated updated
+		 * @hide
+		 * Called by save after an instance is updated.  Publishes 'updated'.
+		 * @param {Object} attrs
+		 */
+		"updated",
+		/**
+		 * @function can.Model.prototype.destroyed destroyed
+		 * @hide
+		 * Called after an instance is destroyed.
+		 *   - Publishes "shortName.destroyed".
+		 *   - Triggers a "destroyed" event on this model.
+		 *   - Removes the model from the global list if its used.
+		 *
+		 */
+		"destroyed"
+	], function (funcName) {
+		can.Model.prototype[funcName] = function (attrs) {
+			var stub,
+				constructor = this.constructor;
+
+			// Update attributes if attributes have been passed
+			stub = attrs && typeof attrs === 'object' && this.attr(attrs.attr ? attrs.attr() : attrs);
+
+			// triggers change event that bubble's like
+			// handler( 'change','1.destroyed' ). This is used
+			// to remove items on destroyed from Model Lists.
+			// but there should be a better way.
+			can.trigger(this, "change", funcName);
+
+		
+
+			// Call event on the instance's Class
+			can.trigger(constructor, funcName, this);
+		};
+	});
+
+	// Model lists are just like `Map.List` except that when their items are 
+	// destroyed, it automatically gets removed from the list.
+	var ML = can.Model.List = can.List({
+		setup: function (params) {
+			if (can.isPlainObject(params) && !can.isArray(params)) {
+				can.List.prototype.setup.apply(this);
+				this.replace(this.constructor.Map.findAll(params));
+			} else {
+				can.List.prototype.setup.apply(this, arguments);
+			}
+		},
+		_changes: function (ev, attr) {
+			can.List.prototype._changes.apply(this, arguments);
+			if (/\w+\.destroyed/.test(attr)) {
+				var index = this.indexOf(ev.target);
+				if (index !== -1) {
+					this.splice(index, 1);
+				}
+			}
+		}
+	});
+
+	return can.Model;
+});
+define('src/js/models/contact',['can/util/string', 'can/model'], function(can) {
+    return can.Model.extend('Contact', {
+        findAll: 'GET /api/contact',
+    }, {})
+});
+/*!
+ * CanJS - 2.0.7
+ * http://canjs.us/
+ * Copyright (c) 2014 Bitovi
+ * Wed, 26 Mar 2014 16:12:27 GMT
+ * Licensed MIT
+ * Includes: CanJS default build
+ * Download from: http://canjs.us/
+ */
+define('can/control',["can/util/library", "can/construct"], function (can) {
+	// ## control.js
+	// `can.Control`  
+	// _Controller_
+
+	// Binds an element, returns a function that unbinds.
+	var bind = function (el, ev, callback) {
+
+		can.bind.call(el, ev, callback);
+
+		return function () {
+			can.unbind.call(el, ev, callback);
+		};
+	},
+		isFunction = can.isFunction,
+		extend = can.extend,
+		each = can.each,
+		slice = [].slice,
+		paramReplacer = /\{([^\}]+)\}/g,
+		special = can.getObject("$.event.special", [can]) || {},
+
+		// Binds an element, returns a function that unbinds.
+		delegate = function (el, selector, ev, callback) {
+			can.delegate.call(el, selector, ev, callback);
+			return function () {
+				can.undelegate.call(el, selector, ev, callback);
+			};
+		},
+
+		// Calls bind or unbind depending if there is a selector.
+		binder = function (el, ev, callback, selector) {
+			return selector ?
+				delegate(el, can.trim(selector), ev, callback) :
+				bind(el, ev, callback);
+		},
+
+		basicProcessor;
+
+	var Control = can.Control = can.Construct(
+		/**
+		 * @add can.Control
+		 */
+		//
+		/** 
+		 * @static
+		 */
+		{
+			// Setup pre-processes which methods are event listeners.
+			/**
+			 * @hide
+			 *
+			 * Setup pre-process which methods are event listeners.
+			 *
+			 */
+			setup: function () {
+
+				// Allow contollers to inherit "defaults" from super-classes as it 
+				// done in `can.Construct`
+				can.Construct.setup.apply(this, arguments);
+
+				// If you didn't provide a name, or are `control`, don't do anything.
+				if (can.Control) {
+
+					// Cache the underscored names.
+					var control = this,
+						funcName;
+
+					// Calculate and cache actions.
+					control.actions = {};
+					for (funcName in control.prototype) {
+						if (control._isAction(funcName)) {
+							control.actions[funcName] = control._action(funcName);
+						}
+					}
+				}
+			},
+			// Moves `this` to the first argument, wraps it with `jQuery` if it's an element
+			_shifter: function (context, name) {
+
+				var method = typeof name === "string" ? context[name] : name;
+
+				if (!isFunction(method)) {
+					method = context[method];
+				}
+
+				return function () {
+					context.called = name;
+					return method.apply(context, [this.nodeName ? can.$(this) : this].concat(slice.call(arguments, 0)));
+				};
+			},
+
+			// Return `true` if is an action.
+			/**
+			 * @hide
+			 * @param {String} methodName a prototype function
+			 * @return {Boolean} truthy if an action or not
+			 */
+			_isAction: function (methodName) {
+
+				var val = this.prototype[methodName],
+					type = typeof val;
+				// if not the constructor
+				return (methodName !== 'constructor') &&
+				// and is a function or links to a function
+				(type === "function" || (type === "string" && isFunction(this.prototype[val]))) &&
+				// and is in special, a processor, or has a funny character
+				!! (special[methodName] || processors[methodName] || /[^\w]/.test(methodName));
+			},
+			// Takes a method name and the options passed to a control
+			// and tries to return the data necessary to pass to a processor
+			// (something that binds things).
+			/**
+			 * @hide
+			 * Takes a method name and the options passed to a control
+			 * and tries to return the data necessary to pass to a processor
+			 * (something that binds things).
+			 *
+			 * For performance reasons, this called twice.  First, it is called when
+			 * the Control class is created.  If the methodName is templated
+			 * like: "{window} foo", it returns null.  If it is not templated
+			 * it returns event binding data.
+			 *
+			 * The resulting data is added to this.actions.
+			 *
+			 * When a control instance is created, _action is called again, but only
+			 * on templated actions.
+			 *
+			 * @param {Object} methodName the method that will be bound
+			 * @param {Object} [options] first param merged with class default options
+			 * @return {Object} null or the processor and pre-split parts.
+			 * The processor is what does the binding/subscribing.
+			 */
+			_action: function (methodName, options) {
+
+				// If we don't have options (a `control` instance), we'll run this 
+				// later.  
+				paramReplacer.lastIndex = 0;
+				if (options || !paramReplacer.test(methodName)) {
+					// If we have options, run sub to replace templates `{}` with a
+					// value from the options or the window
+					var convertedName = options ? can.sub(methodName, this._lookup(options)) : methodName;
+					if (!convertedName) {
+					
+						return null;
+					}
+					// If a `{}` template resolves to an object, `convertedName` will be
+					// an array
+					var arr = can.isArray(convertedName),
+
+						// Get the name
+						name = arr ? convertedName[1] : convertedName,
+
+						// Grab the event off the end
+						parts = name.split(/\s+/g),
+						event = parts.pop();
+
+					return {
+						processor: processors[event] || basicProcessor,
+						parts: [name, parts.join(" "), event],
+						delegate: arr ? convertedName[0] : undefined
+					};
+				}
+			},
+			_lookup: function (options) {
+				return [options, window];
+			},
+			// An object of `{eventName : function}` pairs that Control uses to 
+			// hook up events auto-magically.
+			/**
+			 * @property {Object.<can.Control.processor>} can.Control.processors processors
+			 * @parent can.Control.static
+			 *
+			 * @description A collection of hookups for custom events on Controls.
+			 *
+			 * @body
+			 * `processors` is an object that allows you to add new events to bind
+			 * to on a control, or to change how existent events are bound. Each
+			 * key-value pair of `processors` is a specification that pertains to
+			 * an event where the key is the name of the event, and the value is
+			 * a function that processes calls to bind to the event.
+			 *
+			 * The processor function takes five arguments:
+			 *
+			 * - _el_: The Control's element.
+			 * - _event_: The event type.
+			 * - _selector_: The selector preceding the event in the binding used on the Control.
+			 * - _callback_: The callback function being bound.
+			 * - _control_: The Control the event is bound on.
+			 *
+			 * Inside your processor function, you should bind _callback_ to the event, and
+			 * return a function for can.Control to call when _callback_ needs to be unbound.
+			 * (If _selector_ is defined, you will likely want to use some form of delegation
+			 * to bind the event.)
+			 *
+			 * Here is a Control with a custom event processor set and two callbacks bound
+			 * to that event:
+			 *
+			 * @codestart
+			 * can.Control.processors.birthday = function(el, ev, selector, callback, control) {
+			 *   if(selector) {
+			 *     myFramework.delegate(ev, el, selector, callback);
+			 *     return function() { myFramework.undelegate(ev, el, selector, callback); };
+			 *   } else {
+			 *     myFramework.bind(ev, el, callback);
+			 *     return function() { myFramework.unbind(ev, el, callback); };
+			 *   }
+			 * };
+			 *
+			 * can.Control("EventTarget", { }, {
+			 *   'birthday': function(el, ev) {
+			 *     // do something appropriate for the occasion
+			 *   },
+			 *   '.grandchild birthday': function(el, ev) {
+			 *     // do something appropriate for the occasion
+			 *   }
+			 * });
+			 *
+			 * var target = new EventTarget('#person');
+			 * @codeend
+			 *
+			 * When `target` is initialized, can.Control will call `can.Control.processors.birthday`
+			 * twice (because there are two event hookups for the _birthday_ event). The first
+			 * time it's called, the arguments will be:
+			 *
+			 * - _el_: A NodeList that wraps the element with id 'person'.
+			 * - _ev_: `'birthday'`
+			 * - _selector_: `''`
+			 * - _callback_: The function assigned to `' birthday'` in the prototype section of `EventTarget`'s
+			 * definition.
+			 * - _control_: `target` itself.
+			 *
+			 * The second time, the arguments are slightly different:
+			 *
+			 * - _el_: A NodeList that wraps the element with id 'person'.
+			 * - _ev_: `'birthday'`
+			 * - _selector_: `'.grandchild'`
+			 * - _callback_: The function assigned to `'.grandchild birthday'` in the prototype section of `EventTarget`'s
+			 * definition.
+			 * - _control_: `target` itself.
+			 *
+			 * can.Control already has processors for these events:
+			 *
+			 *   - change
+			 *   - click
+			 *   - contextmenu
+			 *   - dblclick
+			 *   - focusin
+			 *   - focusout
+			 *   - keydown
+			 *   - keyup
+			 *   - keypress
+			 *   - mousedown
+			 *   - mouseenter
+			 *   - mouseleave
+			 *   - mousemove
+			 *   - mouseout
+			 *   - mouseover
+			 *   - mouseup
+			 *   - reset
+			 *   - resize
+			 *   - scroll
+			 *   - select
+			 *   - submit
+			 */
+			processors: {},
+			// A object of name-value pairs that act as default values for a 
+			// control instance
+			defaults: {}
+			/**
+			 * @property {Object} can.Control.defaults defaults
+			 * @parent can.Control.static
+			 * @description Default values for the Control's options.
+			 *
+			 * @body
+			 * `defaults` provides default values for a Control's options.
+			 * Options passed into the constructor function will be shallowly merged
+			 * into the values from defaults in [can.Control::setup], and
+			 * the result will be stored in [can.Control::options this.options].
+			 *
+			 *     Message = can.Control.extend({
+			 *       defaults: {
+			 *         message: "Hello World"
+			 *       }
+			 *     }, {
+			 *       init: function(){
+			 *         this.element.text( this.options.message );
+			 *       }
+			 *     });
+			 *
+			 *     new Message( "#el1" ); //writes "Hello World"
+			 *     new Message( "#el12", { message: "hi" } ); //writes hi
+			 */
+		}, {
+			/**
+			 * @prototype
+			 */
+			//
+			/**
+			 * @functioncan.Control.prototype.init init
+			 * @parent can.Control.prototype
+			 * @description instance init method required for most applications of [can.Control]
+			 * @signature `control.init(element,options)`
+			 * @param element The wrapped element passed to the control.
+			 *		Control accepts a raw HTMLElement, a CSS selector, or a NodeList.
+			 *		This is set as `this.element` on the control instance.
+			 * @param options The second argument passed to new Control,
+			 *		extended with the can.Control's static _defaults__.
+			 *		This is set as `this.options` on the control instance.
+			 *		Note that static is used formally to indicate that
+			 *		_default values are shared across control instances_.
+			 *
+			 * @body
+			 * Any additional arguments provided to the constructor will be passed as normal.
+			 */
+			// Sets `this.element`, saves the control in `data, binds event
+			// handlers.
+			/**
+			 * @property {NodeList} can.Control.prototype.element element
+			 * @parent can.Control.prototype
+			 * @description The element associated with this control.
+			 *
+			 * @body
+			 * The library-wrapped element this control is associated with,
+			 * as passed into the constructor. If you want to change the element
+			 * that a Control will attach to, you should do it in [can.Control::setup setup].
+			 * If you change the element later, make sure to call [can.Control::on on]
+			 * to rebind all the bindings.
+			 *
+			 * If `element` is removed from the DOM, [can.Control::destroy] will
+			 * be called and the Control will be destroyed.
+			 */
+			//
+			/**
+			 * @function can.Control.prototype.setup setup
+			 * @parent can.Control.prototype
+			 * @description Perform pre-initialization logic.
+			 * @signature `control.setup(element, options)`
+			 * @param {HTMLElement|NodeList|String} element The element as passed to the constructor.
+			 * @param {Object} [options] option values for the control.  These get added to
+			 * this.options and merged with [can.Control.static.defaults defaults].
+			 * @return {undefined|Array} return an array if you want to change what init is called with. By
+			 * default it is called with the element and options passed to the control.
+			 *
+			 * @body
+			 * Setup is where most of control's magic happens.  It does the following:
+			 *
+			 * ### Sets this.element
+			 *
+			 * The first parameter passed to new Control( el, options ) is expected to be
+			 * an element.  This gets converted to a Wrapped NodeList element and set as
+			 * [can.Control.prototype.element this.element].
+			 *
+			 * ### Adds the control's name to the element's className
+			 *
+			 * Control adds it's plugin name to the element's className for easier
+			 * debugging.  For example, if your Control is named "Foo.Bar", it adds
+			 * "foo_bar" to the className.
+			 *
+			 * ### Saves the control in $.data
+			 *
+			 * A reference to the control instance is saved in $.data.  You can find
+			 * instances of "Foo.Bar" like:
+			 *
+			 *     $( '#el' ).data( 'controls' )[ 'foo_bar' ]
+			 *
+			 * ### Merges Options
+			 * Merges the default options with optional user-supplied ones.
+			 * Additionally, default values are exposed in the static [can.Control.static.defaults defaults]
+			 * so that users can change them.
+			 *
+			 * ### Binds event handlers
+			 *
+			 * Setup does the event binding described in [can.Control].
+			 */
+			setup: function (element, options) {
+
+				var cls = this.constructor,
+					pluginname = cls.pluginName || cls._fullName,
+					arr;
+
+				// Want the raw element here.
+				this.element = can.$(element);
+
+				if (pluginname && pluginname !== 'can_control') {
+					// Set element and `className` on element.
+					this.element.addClass(pluginname);
+				}
+				arr = can.data(this.element, 'controls');
+				if (!arr) {
+					arr = [];
+					can.data(this.element, 'controls', arr);
+				}
+				arr.push(this);
+
+				// Option merging.
+				/**
+				 * @property {Object} can.Control.prototype.options options
+				 * @parent can.Control.prototype
+				 *
+				 * @description
+				 *
+				 * Options used to configure a control.
+				 *
+				 * @body
+				 *
+				 * The `this.options` property is an Object that contains
+				 * configuration data passed to a control when it is
+				 * created (`new can.Control(element, options)`).
+				 *
+				 * In the following example, an options object with
+				 * a message is passed to a `Greeting` control. The
+				 * `Greeting` control changes the text of its [can.Control::element element]
+				 * to the options' message value.
+				 *
+				 *     var Greeting = can.Control.extend({
+				 *       init: function(){
+				 *         this.element.text( this.options.message )
+				 *       }
+				 *     })
+				 *
+				 *     new Greeting("#greeting",{message: "I understand this.options"})
+				 *
+				 * The options argument passed when creating the control
+				 * is merged with [can.Control.defaults defaults] in
+				 * [can.Control.prototype.setup setup].
+				 *
+				 * In the following example, if no message property is provided,
+				 * the defaults' message property is used.
+				 *
+				 *     var Greeting = can.Control.extend({
+				 *       defaults: {
+				 *         message: "Defaults merged into this.options"
+				 *       }
+				 *     },{
+				 *       init: function(){
+				 *         this.element.text( this.options.message )
+				 *       }
+				 *     })
+				 *
+				 *     new Greeting("#greeting")
+				 *
+				 */
+				this.options = extend({}, cls.defaults, options);
+
+				// Bind all event handlers.
+				this.on();
+
+				// Gets passed into `init`.
+				/**
+				 * @property {can.NodeList} can.Control.prototype.element element
+				 *
+				 * @description The element the Control is associated with.
+				 *
+				 * @parent can.Control.prototype
+				 *
+				 * @body
+				 *
+				 * The control instance's HTMLElement (or window) wrapped by the
+				 * util library for ease of use. It is set by the first
+				 * parameter to `new can.Construct( element, options )`
+				 * in [can.Control::setup].  By default, a control listens to events on `this.element`.
+				 *
+				 * ### Quick Example
+				 *
+				 * The following `HelloWorld` control sets the control`s text to "Hello World":
+				 *
+				 *     HelloWorld = can.Control({
+				 *       init: function(){
+				 *		this.element.text( 'Hello World' );
+				 *       }
+				 *     });
+				 *
+				 *     // create the controller on the element
+				 *     new HelloWorld( document.getElementById( '#helloworld' ) );
+				 *
+				 * ## Wrapped NodeList
+				 *
+				 * `this.element` is a wrapped NodeList of one HTMLELement (or window).  This
+				 * is for convenience in libraries like jQuery where all methods operate only on a
+				 * NodeList.  To get the raw HTMLElement, write:
+				 *
+				 *     this.element[0] //-> HTMLElement
+				 *
+				 * The following details the NodeList used by each library with
+				 * an example of updating its text:
+				 *
+				 * __jQuery__ `jQuery( HTMLElement )`
+				 *
+				 *     this.element.text("Hello World")
+				 *
+				 * __Zepto__ `Zepto( HTMLElement )`
+				 *
+				 *     this.element.text("Hello World")
+				 *
+				 * __Dojo__ `new dojo.NodeList( HTMLElement )`
+				 *
+				 *     this.element.text("Hello World")
+				 *
+				 * __Mootools__ `$$( HTMLElement )`
+				 *
+				 *     this.element.empty().appendText("Hello World")
+				 *
+				 * __YUI__
+				 *
+				 *     this.element.set("text", "Hello World")
+				 *
+				 *
+				 * ## Changing `this.element`
+				 *
+				 * Sometimes you don't want what's passed to `new can.Control`
+				 * to be this.element.  You can change this by overwriting
+				 * setup or by unbinding, setting this.element, and rebinding.
+				 *
+				 * ### Overwriting Setup
+				 *
+				 * The following Combobox overwrites setup to wrap a
+				 * select element with a div.  That div is used
+				 * as `this.element`. Notice how `destroy` sets back the
+				 * original element.
+				 *
+				 *     Combobox = can.Control({
+				 *       setup: function( el, options ) {
+				 *          this.oldElement = $( el );
+				 *          var newEl = $( '<div/>' );
+				 *          this.oldElement.wrap( newEl );
+				 *          can.Control.prototype.setup.call( this, newEl, options );
+				 *       },
+				 *       init: function() {
+				 *          this.element //-> the div
+				 *       },
+				 *       ".option click": function() {
+				 *         // event handler bound on the div
+				 *       },
+				 *       destroy: function() {
+				 *          var div = this.element; //save reference
+				 *          can.Control.prototype.destroy.call( this );
+				 *          div.replaceWith( this.oldElement );
+				 *       }
+				 *     });
+				 *
+				 * ### unbinding, setting, and rebinding.
+				 *
+				 * You could also change this.element by calling
+				 * [can.Control::off], setting this.element, and
+				 * then calling [can.Control::on] like:
+				 *
+				 *     move: function( newElement ) {
+				 *        this.off();
+				 *        this.element = $( newElement );
+				 *        this.on();
+				 *     }
+				 */
+				return [this.element, this.options];
+			},
+			/**
+			 * @function can.Control.prototype.on on
+			 * @parent can.Control.prototype
+			 *
+			 * @description Bind an event handler to a Control, or rebind all event handlers on a Control.
+			 *
+			 * @signature `control.on([el,] selector, eventName, func)`
+			 * @param {HTMLElement|jQuery collection|Object} [el=this.element]
+			 * The element to be bound.  If no element is provided, the control's element is used instead.
+			 * @param {CSSSelectorString} selector A css selector for event delegation.
+			 * @param {String} eventName The event to listen for.
+			 * @param {Function|String} func A callback function or the String name of a control function.  If a control
+			 * function name is given, the control function is called back with the bound element and event as the first
+			 * and second parameter.  Otherwise the function is called back like a normal bind.
+			 * @return {Number} The id of the binding in this._bindings
+			 *
+			 * @body
+			 * `on(el, selector, eventName, func)` binds an event handler for an event to a selector under the scope of the given element.
+			 *
+			 * @signature `control.on()`
+			 *
+			 * Rebind all of a control's event handlers.
+			 *
+			 * @return {Number} The number of handlers bound to this Control.
+			 *
+			 * @body
+			 * `this.on()` is used to rebind
+			 * all event handlers when [can.Control::options this.options] has changed.  It
+			 * can also be used to bind or delegate from other elements or objects.
+			 *
+			 * ## Rebinding
+			 *
+			 * By using templated event handlers, a control can listen to objects outside
+			 * `this.element`.  This is extremely common in MVC programming.  For example,
+			 * the following control might listen to a task model's `completed` property and
+			 * toggle a strike className like:
+			 *
+			 *     TaskStriker = can.Control({
+			 *       "{task} completed": function(){
+			 *			this.update();
+			 *       },
+			 *       update: function(){
+			 *         if ( this.options.task.completed ) {
+			 *			this.element.addClass( 'strike' );
+			 *		} else {
+			 *           this.element.removeClass( 'strike' );
+			 *         }
+			 *       }
+			 *     });
+			 *
+			 *     var taskstriker = new TaskStriker({
+			 *       task: new Task({ completed: 'true' })
+			 *     });
+			 *
+			 * To update the `taskstriker`'s task, add a task method that updates
+			 * this.options and rebinds the event handlers for the new task like:
+			 *
+			 *     TaskStriker = can.Control({
+			 *       "{task} completed": function(){
+			 *			this.update();
+			 *       },
+			 *       update: function() {
+			 *         if ( this.options.task.completed ) {
+			 *			this.element.addClass( 'strike' );
+			 *		} else {
+			 *           this.element.removeClass( 'strike' );
+			 *         }
+			 *       },
+			 *       task: function( newTask ) {
+			 *         this.options.task = newTask;
+			 *         this.on();
+			 *         this.update();
+			 *       }
+			 *     });
+			 *
+			 *     var taskstriker = new TaskStriker({
+			 *       task: new Task({ completed: true })
+			 *     });
+			 *     taskstriker.task( new TaskStriker({
+			 *       task: new Task({ completed: false })
+			 *     }));
+			 *
+			 * ## Adding new events
+			 *
+			 * If events need to be bound to outside of the control and templated event handlers
+			 * are not sufficient, you can call this.on to bind or delegate programmatically:
+			 *
+			 *     init: function() {
+			 *        // calls somethingClicked( el, ev )
+			 *        this.on( 'click', 'somethingClicked' );
+			 *
+			 *        // calls function when the window is clicked
+			 *        this.on( window, 'click', function( ev ) {
+			 *          //do something
+			 *        });
+			 *     },
+			 *     somethingClicked: function( el, ev ) {
+			 *
+			 *     }
+			 */
+			on: function (el, selector, eventName, func) {
+				if (!el) {
+
+					// Adds bindings.
+					this.off();
+
+					// Go through the cached list of actions and use the processor 
+					// to bind
+					var cls = this.constructor,
+						bindings = this._bindings,
+						actions = cls.actions,
+						element = this.element,
+						destroyCB = can.Control._shifter(this, "destroy"),
+						funcName, ready;
+
+					for (funcName in actions) {
+						// Only push if we have the action and no option is `undefined`
+						if (actions.hasOwnProperty(funcName) &&
+							(ready = actions[funcName] || cls._action(funcName, this.options))) {
+							bindings.push(ready.processor(ready.delegate || element,
+								ready.parts[2], ready.parts[1], funcName, this));
+						}
+					}
+
+					// Setup to be destroyed...  
+					// don't bind because we don't want to remove it.
+					can.bind.call(element, "removed", destroyCB);
+					bindings.push(function (el) {
+						can.unbind.call(el, "removed", destroyCB);
+					});
+					return bindings.length;
+				}
+
+				if (typeof el === 'string') {
+					func = eventName;
+					eventName = selector;
+					selector = el;
+					el = this.element;
+				}
+
+				if (func === undefined) {
+					func = eventName;
+					eventName = selector;
+					selector = null;
+				}
+
+				if (typeof func === 'string') {
+					func = can.Control._shifter(this, func);
+				}
+
+				this._bindings.push(binder(el, eventName, func, selector));
+
+				return this._bindings.length;
+			},
+			// Unbinds all event handlers on the controller.
+			/**
+			 * @hide
+			 * Unbinds all event handlers on the controller. You should never
+			 * be calling this unless in use with [can.Control::on].
+			 */
+			off: function () {
+				var el = this.element[0];
+				each(this._bindings || [], function (value) {
+					value(el);
+				});
+				// Adds bindings.
+				this._bindings = [];
+			},
+			// Prepares a `control` for garbage collection
+			/**
+			 * @description Remove a Control from an element and clean up the Control.
+			 * @signature `control.destroy()`
+			 *
+			 * Prepares a control for garbage collection and is a place to
+			 * reset any changes the control has made.
+			 *
+			 * @function can.Control.prototype.destroy destroy
+			 * @parent can.Control.prototype
+			 *
+			 * @body
+			 *
+			 *
+			 * ## Allowing Garbage Collection
+			 *
+			 * Destroy is called whenever a control's element is removed from the page using
+			 * the library's standard HTML modifier methods.  This means that you
+			 * don't have to call destroy yourself and it
+			 * will be called automatically when appropriate.
+			 *
+			 * The following `Clicker` widget listens on the window for clicks and updates
+			 * its element's innerHTML.  If we remove the element, the window's event handler
+			 * is removed auto-magically:
+			 *
+			 *
+			 *      Clickr = can.Control({
+			 *       "{window} click": function() {
+			 *			this.element.html( this.count ?
+			 *			this.count++ : this.count = 0 );
+			 *       }
+			 *     });
+			 *
+			 *     // create a clicker on an element
+			 *     new Clicker( "#clickme" );
+			 *
+			 *     // remove the element
+			 *     $( '#clickme' ).remove();
+			 *
+			 *
+			 * The methods you can use that will destroy controls automatically by library:
+			 *
+			 * __jQuery and Zepto__
+			 *
+			 *   - $.fn.remove
+			 *   - $.fn.html
+			 *   - $.fn.replaceWith
+			 *   - $.fn.empty
+			 *
+			 * __Dojo__
+			 *
+			 *   - dojo.destroy
+			 *   - dojo.empty
+			 *   - dojo.place (with the replace option)
+			 *
+			 * __Mootools__
+			 *
+			 *   - Element.prototype.destroy
+			 *
+			 * __YUI__
+			 *
+			 *   - Y.Node.prototype.remove
+			 *   - Y.Node.prototype.destroy
+			 *
+			 *
+			 * ## Teardown in Destroy
+			 *
+			 * Sometimes, you want to reset a controlled element back to its
+			 * original state when the control is destroyed.  Overwriting destroy
+			 * lets you write teardown code of this manner.  __When overwriting
+			 * destroy, make sure you call Control's base functionality__.
+			 *
+			 * The following example changes an element's text when the control is
+			 * created and sets it back when the control is removed:
+			 *
+			 *     Changer = can.Control.extend({
+			 *       init: function() {
+			 *         this.oldText = this.element.text();
+			 *         this.element.text( "Changed!!!" );
+			 *       },
+			 *       destroy: function() {
+			 *         this.element.text( this.oldText );
+			 *         can.Control.prototype.destroy.call( this );
+			 *       }
+			 *     });
+			 *
+			 *     // create a changer which changes #myel's text
+			 *     var changer = new Changer( '#myel' );
+			 *
+			 *     // destroy changer which will reset it
+			 *     changer.destroy();
+			 *
+			 * ## Base Functionality
+			 *
+			 * Control prepares the control for garbage collection by:
+			 *
+			 *   - unbinding all event handlers
+			 *   - clearing references to this.element and this.options
+			 *   - clearing the element's reference to the control
+			 *   - removing it's [can.Control.pluginName] from the element's className
+			 *
+			 */
+			destroy: function () {
+				//Control already destroyed
+				if (this.element === null) {
+				
+					return;
+				}
+				var Class = this.constructor,
+					pluginName = Class.pluginName || Class._fullName,
+					controls;
+
+				// Unbind bindings.
+				this.off();
+
+				if (pluginName && pluginName !== 'can_control') {
+					// Remove the `className`.
+					this.element.removeClass(pluginName);
+				}
+
+				// Remove from `data`.
+				controls = can.data(this.element, "controls");
+				controls.splice(can.inArray(this, controls), 1);
+
+				can.trigger(this, "destroyed"); // In case we want to know if the `control` is removed.
+
+				this.element = null;
+			}
+		});
+
+	var processors = can.Control.processors;
+	// Processors do the binding.
+	// They return a function that unbinds when called.
+	//
+	// The basic processor that binds events.
+	basicProcessor = function (el, event, selector, methodName, control) {
+		return binder(el, event, can.Control._shifter(control, methodName), selector);
+	};
+
+	// Set common events to be processed as a `basicProcessor`
+	each(["change", "click", "contextmenu", "dblclick", "keydown", "keyup",
+		"keypress", "mousedown", "mousemove", "mouseout", "mouseover",
+		"mouseup", "reset", "resize", "scroll", "select", "submit", "focusin",
+		"focusout", "mouseenter", "mouseleave",
+		// #104 - Add touch events as default processors
+		// TOOD feature detect?
+		"touchstart", "touchmove", "touchcancel", "touchend", "touchleave"
+	], function (v) {
+		processors[v] = basicProcessor;
+	});
+
+	return Control;
+});
+define('src/js/home/home',['can/util/string', 'src/js/models/contact', 'can/control'], function(can, Contact) {
+    return can.Control.extend({
+        defaults: {
+            views: {}
+        }
+    }, {
+        init: function(el, options) {
+            var contacts = Contact.findAll({});
+            el.html('Homepage content');
+        }
+    });
+});
+define('src/js/contact/list/paginate',['can/util/string', 'can/map'], function(can) {
+    return can.Map.extend('Paginate', {
+        count: Infinity,
+        offset: 0,
+        limit: 5,
+        next: function() {
+            this.attr('offset', this.offset + this.limit);
+        },
+        prev: function() {
+            this.attr('offset', this.offset - this.limit)
+        },
+        setOffset: function(newOffset) {
+            return newOffset < 0 ?
+                0 :
+                Math.min(newOffset, !isNaN(this.count) ?
+                    this.count :
+                    Infinity)
+        },
+        setCount: function(newCount, success, error) {
+            return newCount < 0 ? 0 : newCount;
+        },
+        canNext: function() {
+            return this.attr('offset') < this.attr('count') -
+                this.attr('limit');
+        },
+        canPrev: function() {
+            return this.attr('offset') > 0;
+        },
+        page: function(newVal) {
+            if (newVal === undefined) {
+                return Math.floor(this.attr('offset') / this.attr('limit')) + 1;
+            } else {
+                this.attr('offset', (parseInt(newVal) - 1) * this.attr('limit'));
+            }
+        },
+        pageCount: function() {
+            var count = Math.ceil((this.attr('count')) / (this.attr('limit')));
+            return count;
+        },
+        goTo: function(page) {
+            if (this.page() == page)
+                return;
+
+            this.page(page);
+        },
+        pages: function() {
+            var pages = [],
+
+                pageRange = this.pageRange();
+
+            for (var i = pageRange.beginPage; i <= pageRange.endPage; i++) {
+                pages.push(i);
+            }
+            return pages;
+        },
+        pageRange: function() {
+
+            var page = this.page(),
+                count = this.pageCount(),
+                maxLinks = 5,
+                beginPage = Math.ceil(Math.max(1, page - maxLinks / 2)),
+
+                endPage = beginPage + maxLinks - 1;
+
+            if (endPage >= count) {
+                endPage = count;
+                beginPage = Math.ceil(Math.max(1, endPage - (maxLinks - 1)));
+            }
+            return {
+                beginPage: beginPage,
+                endPage: endPage
+            };
+        }
+    });
+});
+/**
+ * @license RequireJS text 2.0.12 Copyright (c) 2010-2014, The Dojo Foundation All Rights Reserved.
+ * Available via the MIT or new BSD license.
+ * see: http://github.com/requirejs/text for details
+ */
+/*jslint regexp: true */
+/*global require, XMLHttpRequest, ActiveXObject,
+  define, window, process, Packages,
+  java, location, Components, FileUtils */
+
+define('text',['module'], function (module) {
+    
+
+    var text, fs, Cc, Ci, xpcIsWindows,
+        progIds = ['Msxml2.XMLHTTP', 'Microsoft.XMLHTTP', 'Msxml2.XMLHTTP.4.0'],
+        xmlRegExp = /^\s*<\?xml(\s)+version=[\'\"](\d)*.(\d)*[\'\"](\s)*\?>/im,
+        bodyRegExp = /<body[^>]*>\s*([\s\S]+)\s*<\/body>/im,
+        hasLocation = typeof location !== 'undefined' && location.href,
+        defaultProtocol = hasLocation && location.protocol && location.protocol.replace(/\:/, ''),
+        defaultHostName = hasLocation && location.hostname,
+        defaultPort = hasLocation && (location.port || undefined),
+        buildMap = {},
+        masterConfig = (module.config && module.config()) || {};
+
+    text = {
+        version: '2.0.12',
+
+        strip: function (content) {
+            //Strips <?xml ...?> declarations so that external SVG and XML
+            //documents can be added to a document without worry. Also, if the string
+            //is an HTML document, only the part inside the body tag is returned.
+            if (content) {
+                content = content.replace(xmlRegExp, "");
+                var matches = content.match(bodyRegExp);
+                if (matches) {
+                    content = matches[1];
+                }
+            } else {
+                content = "";
+            }
+            return content;
+        },
+
+        jsEscape: function (content) {
+            return content.replace(/(['\\])/g, '\\$1')
+                .replace(/[\f]/g, "\\f")
+                .replace(/[\b]/g, "\\b")
+                .replace(/[\n]/g, "\\n")
+                .replace(/[\t]/g, "\\t")
+                .replace(/[\r]/g, "\\r")
+                .replace(/[\u2028]/g, "\\u2028")
+                .replace(/[\u2029]/g, "\\u2029");
+        },
+
+        createXhr: masterConfig.createXhr || function () {
+            //Would love to dump the ActiveX crap in here. Need IE 6 to die first.
+            var xhr, i, progId;
+            if (typeof XMLHttpRequest !== "undefined") {
+                return new XMLHttpRequest();
+            } else if (typeof ActiveXObject !== "undefined") {
+                for (i = 0; i < 3; i += 1) {
+                    progId = progIds[i];
+                    try {
+                        xhr = new ActiveXObject(progId);
+                    } catch (e) {}
+
+                    if (xhr) {
+                        progIds = [progId];  // so faster next time
+                        break;
+                    }
+                }
+            }
+
+            return xhr;
+        },
+
+        /**
+         * Parses a resource name into its component parts. Resource names
+         * look like: module/name.ext!strip, where the !strip part is
+         * optional.
+         * @param {String} name the resource name
+         * @returns {Object} with properties "moduleName", "ext" and "strip"
+         * where strip is a boolean.
+         */
+        parseName: function (name) {
+            var modName, ext, temp,
+                strip = false,
+                index = name.indexOf("."),
+                isRelative = name.indexOf('./') === 0 ||
+                             name.indexOf('../') === 0;
+
+            if (index !== -1 && (!isRelative || index > 1)) {
+                modName = name.substring(0, index);
+                ext = name.substring(index + 1, name.length);
+            } else {
+                modName = name;
+            }
+
+            temp = ext || modName;
+            index = temp.indexOf("!");
+            if (index !== -1) {
+                //Pull off the strip arg.
+                strip = temp.substring(index + 1) === "strip";
+                temp = temp.substring(0, index);
+                if (ext) {
+                    ext = temp;
+                } else {
+                    modName = temp;
+                }
+            }
+
+            return {
+                moduleName: modName,
+                ext: ext,
+                strip: strip
+            };
+        },
+
+        xdRegExp: /^((\w+)\:)?\/\/([^\/\\]+)/,
+
+        /**
+         * Is an URL on another domain. Only works for browser use, returns
+         * false in non-browser environments. Only used to know if an
+         * optimized .js version of a text resource should be loaded
+         * instead.
+         * @param {String} url
+         * @returns Boolean
+         */
+        useXhr: function (url, protocol, hostname, port) {
+            var uProtocol, uHostName, uPort,
+                match = text.xdRegExp.exec(url);
+            if (!match) {
+                return true;
+            }
+            uProtocol = match[2];
+            uHostName = match[3];
+
+            uHostName = uHostName.split(':');
+            uPort = uHostName[1];
+            uHostName = uHostName[0];
+
+            return (!uProtocol || uProtocol === protocol) &&
+                   (!uHostName || uHostName.toLowerCase() === hostname.toLowerCase()) &&
+                   ((!uPort && !uHostName) || uPort === port);
+        },
+
+        finishLoad: function (name, strip, content, onLoad) {
+            content = strip ? text.strip(content) : content;
+            if (masterConfig.isBuild) {
+                buildMap[name] = content;
+            }
+            onLoad(content);
+        },
+
+        load: function (name, req, onLoad, config) {
+            //Name has format: some.module.filext!strip
+            //The strip part is optional.
+            //if strip is present, then that means only get the string contents
+            //inside a body tag in an HTML string. For XML/SVG content it means
+            //removing the <?xml ...?> declarations so the content can be inserted
+            //into the current doc without problems.
+
+            // Do not bother with the work if a build and text will
+            // not be inlined.
+            if (config && config.isBuild && !config.inlineText) {
+                onLoad();
+                return;
+            }
+
+            masterConfig.isBuild = config && config.isBuild;
+
+            var parsed = text.parseName(name),
+                nonStripName = parsed.moduleName +
+                    (parsed.ext ? '.' + parsed.ext : ''),
+                url = req.toUrl(nonStripName),
+                useXhr = (masterConfig.useXhr) ||
+                         text.useXhr;
+
+            // Do not load if it is an empty: url
+            if (url.indexOf('empty:') === 0) {
+                onLoad();
+                return;
+            }
+
+            //Load the text. Use XHR if possible and in a browser.
+            if (!hasLocation || useXhr(url, defaultProtocol, defaultHostName, defaultPort)) {
+                text.get(url, function (content) {
+                    text.finishLoad(name, parsed.strip, content, onLoad);
+                }, function (err) {
+                    if (onLoad.error) {
+                        onLoad.error(err);
+                    }
+                });
+            } else {
+                //Need to fetch the resource across domains. Assume
+                //the resource has been optimized into a JS module. Fetch
+                //by the module name + extension, but do not include the
+                //!strip part to avoid file system issues.
+                req([nonStripName], function (content) {
+                    text.finishLoad(parsed.moduleName + '.' + parsed.ext,
+                                    parsed.strip, content, onLoad);
+                });
+            }
+        },
+
+        write: function (pluginName, moduleName, write, config) {
+            if (buildMap.hasOwnProperty(moduleName)) {
+                var content = text.jsEscape(buildMap[moduleName]);
+                write.asModule(pluginName + "!" + moduleName,
+                               "define(function () { return '" +
+                                   content +
+                               "';});\n");
+            }
+        },
+
+        writeFile: function (pluginName, moduleName, req, write, config) {
+            var parsed = text.parseName(moduleName),
+                extPart = parsed.ext ? '.' + parsed.ext : '',
+                nonStripName = parsed.moduleName + extPart,
+                //Use a '.js' file name so that it indicates it is a
+                //script that can be loaded across domains.
+                fileName = req.toUrl(parsed.moduleName + extPart) + '.js';
+
+            //Leverage own load() method to load plugin value, but only
+            //write out values that do not have the strip argument,
+            //to avoid any potential issues with ! in file names.
+            text.load(nonStripName, req, function (value) {
+                //Use own write() method to construct full module value.
+                //But need to create shell that translates writeFile's
+                //write() to the right interface.
+                var textWrite = function (contents) {
+                    return write(fileName, contents);
+                };
+                textWrite.asModule = function (moduleName, contents) {
+                    return write.asModule(moduleName, fileName, contents);
+                };
+
+                text.write(pluginName, nonStripName, textWrite, config);
+            }, config);
+        }
+    };
+
+    if (masterConfig.env === 'node' || (!masterConfig.env &&
+            typeof process !== "undefined" &&
+            process.versions &&
+            !!process.versions.node &&
+            !process.versions['node-webkit'])) {
+        //Using special require.nodeRequire, something added by r.js.
+        fs = require.nodeRequire('fs');
+
+        text.get = function (url, callback, errback) {
+            try {
+                var file = fs.readFileSync(url, 'utf8');
+                //Remove BOM (Byte Mark Order) from utf8 files if it is there.
+                if (file.indexOf('\uFEFF') === 0) {
+                    file = file.substring(1);
+                }
+                callback(file);
+            } catch (e) {
+                if (errback) {
+                    errback(e);
+                }
+            }
+        };
+    } else if (masterConfig.env === 'xhr' || (!masterConfig.env &&
+            text.createXhr())) {
+        text.get = function (url, callback, errback, headers) {
+            var xhr = text.createXhr(), header;
+            xhr.open('GET', url, true);
+
+            //Allow plugins direct access to xhr headers
+            if (headers) {
+                for (header in headers) {
+                    if (headers.hasOwnProperty(header)) {
+                        xhr.setRequestHeader(header.toLowerCase(), headers[header]);
+                    }
+                }
+            }
+
+            //Allow overrides specified in config
+            if (masterConfig.onXhr) {
+                masterConfig.onXhr(xhr, url);
+            }
+
+            xhr.onreadystatechange = function (evt) {
+                var status, err;
+                //Do not explicitly handle errors, those should be
+                //visible via console output in the browser.
+                if (xhr.readyState === 4) {
+                    status = xhr.status || 0;
+                    if (status > 399 && status < 600) {
+                        //An http 4xx or 5xx error. Signal an error.
+                        err = new Error(url + ' HTTP status: ' + status);
+                        err.xhr = xhr;
+                        if (errback) {
+                            errback(err);
+                        }
+                    } else {
+                        callback(xhr.responseText);
+                    }
+
+                    if (masterConfig.onXhrComplete) {
+                        masterConfig.onXhrComplete(xhr, url);
+                    }
+                }
+            };
+            xhr.send(null);
+        };
+    } else if (masterConfig.env === 'rhino' || (!masterConfig.env &&
+            typeof Packages !== 'undefined' && typeof java !== 'undefined')) {
+        //Why Java, why is this so awkward?
+        text.get = function (url, callback) {
+            var stringBuffer, line,
+                encoding = "utf-8",
+                file = new java.io.File(url),
+                lineSeparator = java.lang.System.getProperty("line.separator"),
+                input = new java.io.BufferedReader(new java.io.InputStreamReader(new java.io.FileInputStream(file), encoding)),
+                content = '';
+            try {
+                stringBuffer = new java.lang.StringBuffer();
+                line = input.readLine();
+
+                // Byte Order Mark (BOM) - The Unicode Standard, version 3.0, page 324
+                // http://www.unicode.org/faq/utf_bom.html
+
+                // Note that when we use utf-8, the BOM should appear as "EF BB BF", but it doesn't due to this bug in the JDK:
+                // http://bugs.sun.com/bugdatabase/view_bug.do?bug_id=4508058
+                if (line && line.length() && line.charAt(0) === 0xfeff) {
+                    // Eat the BOM, since we've already found the encoding on this file,
+                    // and we plan to concatenating this buffer with others; the BOM should
+                    // only appear at the top of a file.
+                    line = line.substring(1);
+                }
+
+                if (line !== null) {
+                    stringBuffer.append(line);
+                }
+
+                while ((line = input.readLine()) !== null) {
+                    stringBuffer.append(lineSeparator);
+                    stringBuffer.append(line);
+                }
+                //Make sure we return a JavaScript string and not a Java string.
+                content = String(stringBuffer.toString()); //String
+            } finally {
+                input.close();
+            }
+            callback(content);
+        };
+    } else if (masterConfig.env === 'xpconnect' || (!masterConfig.env &&
+            typeof Components !== 'undefined' && Components.classes &&
+            Components.interfaces)) {
+        //Avert your gaze!
+        Cc = Components.classes;
+        Ci = Components.interfaces;
+        Components.utils['import']('resource://gre/modules/FileUtils.jsm');
+        xpcIsWindows = ('@mozilla.org/windows-registry-key;1' in Cc);
+
+        text.get = function (url, callback) {
+            var inStream, convertStream, fileObj,
+                readData = {};
+
+            if (xpcIsWindows) {
+                url = url.replace(/\//g, '\\');
+            }
+
+            fileObj = new FileUtils.File(url);
+
+            //XPCOM, you so crazy
+            try {
+                inStream = Cc['@mozilla.org/network/file-input-stream;1']
+                           .createInstance(Ci.nsIFileInputStream);
+                inStream.init(fileObj, 1, 0, false);
+
+                convertStream = Cc['@mozilla.org/intl/converter-input-stream;1']
+                                .createInstance(Ci.nsIConverterInputStream);
+                convertStream.init(inStream, "utf-8", inStream.available(),
+                Ci.nsIConverterInputStream.DEFAULT_REPLACEMENT_CHARACTER);
+
+                convertStream.readString(inStream.available(), readData);
+                convertStream.close();
+                inStream.close();
+                callback(readData.value);
+            } catch (e) {
+                throw new Error((fileObj && fileObj.path || '') + ': ' + e);
+            }
+        };
+    }
+    return text;
+});
+
+
+define('text!src/js/contact/list/pager/init.mustache',[],function () { return '{{#paginate.canPrev}}\n<a href="javascript://" class="prev {{#paginate.canPrev}}enabled{{/paginate.canPrev}}">Prev</a>\n{{/paginate.canPrev}}\n<div class="pagination pagination-small pagination-centered">\n<ul>\n{{#paginate.pages}}\n<li class="page" {{data \'page\'}}>\n\t<a href="javascript://">\n\t\t{{.}}\n\t</a>\n</li>\n\t{{/paginate.pages}}\n</ul></div>\n{{#paginate.canNext}}\n<a href="javascript://" class="next {{#paginate.canNext}}enabled{{/paginate.canNext}}">Next</a>\n{{/paginate.canNext}}\n';});
+
+define('src/js/contact/list/pager/pager',['can/util/string',
+    'text!src/js/contact/list/pager/init.mustache',
+    'can/control'
+], function(can, pagerStache) {
+    return can.Control.extend('Pager', {
+        defaults: {}
+    }, {
+        init: function() {
+            var tpl = can.view.mustache(pagerStache);
+
+            this.element.html(tpl({
+                paginate: this.options.paginate
+            }));
+        },
+        ".next click": function() {
+            var paginate = this.options.paginate;
+            paginate.attr('offset', paginate.offset + paginate.limit);
+        },
+        ".prev click": function() {
+            var paginate = this.options.paginate;
+            paginate.attr('offset', paginate.offset - paginate.limit);
+        },
+        "li.page click": function(el, ev) {
+            var page = can.data(can.$(el), 'page');
+            this.options.paginate.goTo(page);
+        }
+
+    });
+});
+
+define('text!src/js/contact/list/grid/init.mustache',[],function () { return '<thead>\n  \t<tr>\n  \t\t<th>Firstname</th><th>Lastname</th>\n  \t</tr>\n  </thead>\n  <tbody>\n  \t{{#items}}\n  \t  <tr>\n  \t  \t<td width="40%">{{firstname}}</td>\n  \t  \t<td width="70%">{{lastname}}</td>\n  \t  </tr>\n  \t{{/items}}\n  </tbody>';});
+
+/*!
+ * CanJS - 2.0.7
+ * http://canjs.us/
+ * Copyright (c) 2014 Bitovi
+ * Wed, 26 Mar 2014 16:12:27 GMT
+ * Licensed MIT
+ * Includes: CanJS default build
+ * Download from: http://canjs.us/
+ */
+define('can/construct/proxy',["can/util/library", "can/construct"], function (can, Construct) {
+	var isFunction = can.isFunction,
+		isArray = can.isArray,
+		makeArray = can.makeArray,
+		proxy = function (funcs) {
+			//args that should be curried
+			var args = makeArray(arguments),
+				self;
+			// get the functions to callback
+			funcs = args.shift();
+			// if there is only one function, make funcs into an array
+			if (!isArray(funcs)) {
+				funcs = [funcs];
+			}
+			// keep a reference to us in self
+			self = this;
+
+		
+
+			return function class_cb() {
+				// add the arguments after the curried args
+				var cur = args.concat(makeArray(arguments)),
+					isString, length = funcs.length,
+					f = 0,
+					func;
+				// go through each function to call back
+				for (; f < length; f++) {
+					func = funcs[f];
+					if (!func) {
+						continue;
+					}
+					// set called with the name of the function on self (this is how this.view works)
+					isString = typeof func === 'string';
+					// call the function
+					cur = (isString ? self[func] : func)
+						.apply(self, cur || []);
+					// pass the result to the next function (if there is a next function)
+					if (f < length - 1) {
+						cur = !isArray(cur) || cur._use_call ? [cur] : cur;
+					}
+				}
+				return cur;
+			};
+		};
+	can.Construct.proxy = can.Construct.prototype.proxy = proxy;
+	// this corrects the case where can/control loads after can/construct/proxy, so static props don't have proxy
+	var correctedClasses = [
+		can.Map,
+		can.Control,
+		can.Model
+	],
+		i = 0;
+	for (; i < correctedClasses.length; i++) {
+		if (correctedClasses[i]) {
+			correctedClasses[i].proxy = proxy;
+		}
+	}
+	return can;
+});
+/*!
+ * CanJS - 2.0.7
+ * http://canjs.us/
+ * Copyright (c) 2014 Bitovi
+ * Wed, 26 Mar 2014 16:12:27 GMT
+ * Licensed MIT
+ * Includes: CanJS default build
+ * Download from: http://canjs.us/
+ */
+define('can/view',["can/util/library"], function (can) {
+	// ## view.js
+	// `can.view`  
+	// _Templating abstraction._
+
+	var isFunction = can.isFunction,
+		makeArray = can.makeArray,
+		// Used for hookup `id`s.
+		hookupId = 1,
+		/**
+		 * @add can.view
+		 */
+		$view = can.view = can.template = function (view, data, helpers, callback) {
+			// If helpers is a `function`, it is actually a callback.
+			if (isFunction(helpers)) {
+				callback = helpers;
+				helpers = undefined;
+			}
+
+			var pipe = function (result) {
+				return $view.frag(result);
+			},
+				// In case we got a callback, we need to convert the can.view.render
+				// result to a document fragment
+				wrapCallback = isFunction(callback) ? function (frag) {
+					callback(pipe(frag));
+				} : null,
+				// Get the result, if a renderer function is passed in, then we just use that to render the data
+				result = isFunction(view) ? view(data, helpers, wrapCallback) : $view.render(view, data, helpers, wrapCallback),
+				deferred = can.Deferred();
+
+			if (isFunction(result)) {
+				return result;
+			}
+
+			if (can.isDeferred(result)) {
+				result.then(function (result, data) {
+					deferred.resolve.call(deferred, pipe(result), data);
+				}, function () {
+					deferred.fail.apply(deferred, arguments);
+				});
+				return deferred;
+			}
+
+			// Convert it into a dom frag.
+			return pipe(result);
+		};
+
+	can.extend($view, {
+		// creates a frag and hooks it up all at once
+		/**
+		 * @function can.view.frag frag
+		 * @parent can.view.static
+		 */
+		frag: function (result, parentNode) {
+			return $view.hookup($view.fragment(result), parentNode);
+		},
+
+		// simply creates a frag
+		// this is used internally to create a frag
+		// insert it
+		// then hook it up
+		fragment: function (result) {
+			var frag = can.buildFragment(result, document.body);
+			// If we have an empty frag...
+			if (!frag.childNodes.length) {
+				frag.appendChild(document.createTextNode(''));
+			}
+			return frag;
+		},
+
+		// Convert a path like string into something that's ok for an `element` ID.
+		toId: function (src) {
+			return can.map(src.toString()
+				.split(/\/|\./g), function (part) {
+					// Dont include empty strings in toId functions
+					if (part) {
+						return part;
+					}
+				})
+				.join('_');
+		},
+
+		hookup: function (fragment, parentNode) {
+			var hookupEls = [],
+				id,
+				func;
+
+			// Get all `childNodes`.
+			can.each(fragment.childNodes ? can.makeArray(fragment.childNodes) : fragment, function (node) {
+				if (node.nodeType === 1) {
+					hookupEls.push(node);
+					hookupEls.push.apply(hookupEls, can.makeArray(node.getElementsByTagName('*')));
+				}
+			});
+
+			// Filter by `data-view-id` attribute.
+			can.each(hookupEls, function (el) {
+				if (el.getAttribute && (id = el.getAttribute('data-view-id')) && (func = $view.hookups[id])) {
+					func(el, parentNode, id);
+					delete $view.hookups[id];
+					el.removeAttribute('data-view-id');
+				}
+			});
+
+			return fragment;
+		},
+
+		/**
+		 * @function can.view.ejs ejs
+		 * @parent can.view.static
+		 *
+		 * @signature `can.view.ejs( [id,] template )`
+		 *
+		 * Register an EJS template string and create a renderer function.
+		 *
+		 *     var renderer = can.view.ejs("<h1><%= message %></h1>");
+		 *     renderer({message: "Hello"}) //-> docFrag[ <h1>Hello</h1> ]
+		 *
+		 * @param {String} [id] An optional ID to register the template.
+		 *
+		 *     can.view.ejs("greet","<h1><%= message %></h1>");
+		 *     can.view("greet",{message: "Hello"}) //-> docFrag[<h1>Hello</h1>]
+		 *
+		 * @param {String} template An EJS template in string form.
+		 * @return {can.view.renderer} A renderer function that takes data and helpers.
+		 *
+		 *
+		 * @body
+		 * `can.view.ejs([id,] template)` registers an EJS template string
+		 * for a given id programatically. The following
+		 * registers `myViewEJS` and renders it into a documentFragment.
+		 *
+		 *      can.view.ejs('myViewEJS', '<h2><%= message %></h2>');
+		 *
+		 *      var frag = can.view('myViewEJS', {
+		 *          message : 'Hello there!'
+		 *      });
+		 *
+		 *      frag // -> <h2>Hello there!</h2>
+		 *
+		 * To convert the template into a render function, just pass
+		 * the template. Call the render function with the data
+		 * you want to pass to the template and it returns the
+		 * documentFragment.
+		 *
+		 *      var renderer = can.view.ejs('<div><%= message %></div>');
+		 *      renderer({
+		 *          message : 'EJS'
+		 *      }); // -> <div>EJS</div>
+		 */
+		// auj
+		/**
+		 * @function can.view.mustache mustache
+		 * @parent can.view.static
+		 *
+		 * @signature `can.view.mustache( [id,] template )`
+		 *
+		 * Register a Mustache template string and create a renderer function.
+		 *
+		 *     var renderer = can.view.mustache("<h1>{{message}}</h1>");
+		 *     renderer({message: "Hello"}) //-> docFrag[ <h1>Hello</h1> ]
+		 *
+		 * @param {String} [id] An optional ID for the template.
+		 *
+		 *     can.view.ejs("greet","<h1>{{message}}</h1>");
+		 *     can.view("greet",{message: "Hello"}) //-> docFrag[<h1>Hello</h1>]
+		 *
+		 * @param {String} template A Mustache template in string form.
+		 *
+		 * @return {can.view.renderer} A renderer function that takes data and helpers.
+		 *
+		 * @body
+		 *
+		 * `can.view.mustache([id,] template)` registers an Mustache template string
+		 * for a given id programatically. The following
+		 * registers `myStache` and renders it into a documentFragment.
+		 *
+		 *      can.viewmustache('myStache', '<h2>{{message}}</h2>');
+		 *
+		 *      var frag = can.view('myStache', {
+		 *          message : 'Hello there!'
+		 *      });
+		 *
+		 *      frag // -> <h2>Hello there!</h2>
+		 *
+		 * To convert the template into a render function, just pass
+		 * the template. Call the render function with the data
+		 * you want to pass to the template and it returns the
+		 * documentFragment.
+		 *
+		 *      var renderer = can.view.mustache('<div>{{message}}</div>');
+		 *      renderer({
+		 *          message : 'Mustache'
+		 *      }); // -> <div>Mustache</div>
+		 */
+		// heir
+		/**
+		 * @property hookups
+		 * @hide
+		 * A list of pending 'hookups'
+		 */
+		hookups: {},
+
+		/**
+		 * @description Create a hookup to insert into templates.
+		 * @function can.view.hook hook
+		 * @parent can.view.static
+		 * @signature `can.view.hook(callback)`
+		 * @param {Function} callback A callback function to be called with the element.
+		 *
+		 * @body
+		 * Registers a hookup function that can be called back after the html is
+		 * put on the page.  Typically this is handled by the template engine.  Currently
+		 * only EJS supports this functionality.
+		 *
+		 *     var id = can.view.hook(function(el){
+		 *            //do something with el
+		 *         }),
+		 *         html = "<div data-view-id='"+id+"'>"
+		 *     $('.foo').html(html);
+		 */
+		hook: function (cb) {
+			$view.hookups[++hookupId] = cb;
+			return ' data-view-id=\'' + hookupId + '\'';
+		},
+
+		/**
+		 * @hide
+		 * @property {Object} can.view.cached view
+		 * @parent can.view
+		 * Cached are put in this object
+		 */
+		cached: {},
+
+		cachedRenderers: {},
+
+		/**
+		 * @property {Boolean} can.view.cache cache
+		 * @parent can.view.static
+		 * By default, views are cached on the client.  If you'd like the
+		 * the views to reload from the server, you can set the `cache` attribute to `false`.
+		 *
+		 *	//- Forces loads from server
+		 *	can.view.cache = false;
+		 *
+		 */
+		cache: true,
+
+		/**
+		 * @function can.view.register register
+		 * @parent can.view.static
+		 * @description Register a templating language.
+		 * @signature `can.view.register(info)`
+		 * @param {{}} info Information about the templating language.
+		 * @option {String} plugin The location of the templating language's plugin.
+		 * @option {String} suffix Files with this suffix will use this templating language's plugin by default.
+		 * @option {function} renderer A function that returns a function that, given data, will render the template with that data.
+		 * The __renderer__ function receives the id of the template and the text of the template.
+		 * @option {function} script A function that returns the string form of the processed template.
+		 *
+		 * @body
+		 * Registers a template engine to be used with
+		 * view helpers and compression.
+		 *
+		 * ## Example
+		 *
+		 * @codestart
+		 * can.View.register({
+		 *	suffix : "tmpl",
+		 *  plugin : "jquery/view/tmpl",
+		 *	renderer: function( id, text ) {
+		 *	return function(data){
+		 *		return jQuery.render( text, data );
+		 *		}
+		 *	},
+		 *	script: function( id, text ) {
+		 *	var tmpl = can.tmpl(text).toString();
+		 *	return "function(data){return ("+
+		 *			tmpl+
+		 *			").call(jQuery, jQuery, data); }";
+		 *	}
+		 * })
+		 * @codeend
+		 */
+		register: function (info) {
+			this.types['.' + info.suffix] = info;
+		},
+
+		types: {},
+
+		/**
+		 * @property {String} can.view.ext ext
+		 * @parent can.view.static
+		 * The default suffix to use if none is provided in the view's url.
+		 * This is set to `.ejs` by default.
+		 *
+		 *	// Changes view ext to 'txt'
+		 *	can.view.ext = 'txt';
+		 *
+		 */
+		ext: ".ejs",
+
+		/**
+		 * Returns the text that
+		 * @hide
+		 * @param {Object} type
+		 * @param {Object} id
+		 * @param {Object} src
+		 */
+		registerScript: function () {},
+
+		/**
+		 * @hide
+		 * Called by a production script to pre-load a renderer function
+		 * into the view cache.
+		 * @param {String} id
+		 * @param {Function} renderer
+		 */
+		preload: function () {},
+
+		/**
+		 * @function can.view.render render
+		 * @parent can.view.static
+		 * @description Render a template.
+		 * @signature `can.view.render(template[, callback])`
+		 * @param {String|Object} view The path of the view template or a view object.
+		 * @param {Function} [callback] A function executed after the template has been processed.
+		 * @return {Function|can.Deferred} A renderer function to be called with data and helpers
+		 * or a Deferred that resolves to a renderer function.
+		 *
+		 * @signature `can.view.render(template, data[, [helpers,] callback])`
+		 * @param {String|Object} view The path of the view template or a view object.
+		 * @param {Object} [data] The data to populate the template with.
+		 * @param {Object.<String, function>} [helpers] Helper methods referenced in the template.
+		 * @param {Function} [callback] A function executed after the template has been processed.
+		 * @return {String|can.Deferred} The template with interpolated data in string form
+		 * or a Deferred that resolves to the template with interpolated data.
+		 *
+		 * @body
+		 * `can.view.render(view, [data], [helpers], callback)` returns the rendered markup produced by the corresponding template
+		 * engine as String. If you pass a deferred object in as data, render returns
+		 * a deferred resolving to the rendered markup.
+		 *
+		 * `can.view.render` is commonly used for sub-templates.
+		 *
+		 * ## Example
+		 *
+		 * _welcome.ejs_ looks like:
+		 *
+		 *     <h1>Hello <%= hello %></h1>
+		 *
+		 * Render it to a string like:
+		 *
+		 *     can.view.render("welcome.ejs",{hello: "world"})
+		 *       //-> <h1>Hello world</h1>
+		 *
+		 * ## Use as a Subtemplate
+		 *
+		 * If you have a template like:
+		 *
+		 *     <ul>
+		 *       <% list(items, function(item){ %>
+		 *         <%== can.view.render("item.ejs",item) %>
+		 *       <% }) %>
+		 *     </ul>
+		 *
+		 * ## Using renderer functions
+		 *
+		 * If you only pass the view path, `can.view will return a renderer function that can be called with
+		 * the data to render:
+		 *
+		 *     var renderer = can.view.render("welcome.ejs");
+		 *     // Do some more things
+		 *     renderer({hello: "world"}) // -> Document Fragment
+		 *
+		 */
+		render: function (view, data, helpers, callback) {
+			// If helpers is a `function`, it is actually a callback.
+			if (isFunction(helpers)) {
+				callback = helpers;
+				helpers = undefined;
+			}
+
+			// See if we got passed any deferreds.
+			var deferreds = getDeferreds(data);
+			var reading, deferred, dataCopy, async, response;
+			if (deferreds.length) {
+				// Does data contain any deferreds?
+				// The deferred that resolves into the rendered content...
+				deferred = new can.Deferred();
+				dataCopy = can.extend({}, data);
+
+				// Add the view request to the list of deferreds.
+				deferreds.push(get(view, true));
+				// Wait for the view and all deferreds to finish...
+				can.when.apply(can, deferreds)
+					.then(function (resolved) {
+						// Get all the resolved deferreds.
+						var objs = makeArray(arguments),
+							// Renderer is the last index of the data.
+							renderer = objs.pop(),
+							// The result of the template rendering with data.
+							result;
+
+						// Make data look like the resolved deferreds.
+						if (can.isDeferred(data)) {
+							dataCopy = usefulPart(resolved);
+						} else {
+							// Go through each prop in data again and
+							// replace the defferreds with what they resolved to.
+							for (var prop in data) {
+								if (can.isDeferred(data[prop])) {
+									dataCopy[prop] = usefulPart(objs.shift());
+								}
+							}
+						}
+
+						// Get the rendered result.
+						result = renderer(dataCopy, helpers);
+
+						// Resolve with the rendered view.
+						deferred.resolve(result, dataCopy);
+
+						// If there's a `callback`, call it back with the result.
+						if (callback) {
+							callback(result, dataCopy);
+						}
+					}, function () {
+						deferred.reject.apply(deferred, arguments);
+					});
+				// Return the deferred...
+				return deferred;
+			} else {
+				// get is called async but in 
+				// ff will be async so we need to temporarily reset
+				if (can.__reading) {
+					reading = can.__reading;
+					can.__reading = null;
+				}
+
+				// No deferreds! Render this bad boy.
+
+				// If there's a `callback` function
+				async = isFunction(callback);
+				// Get the `view` type
+				deferred = get(view, async);
+				if (can.Map && reading) {
+					can.__reading = reading;
+				}
+
+				// If we are `async`...
+				if (async) {
+					// Return the deferred
+					response = deferred;
+					// And fire callback with the rendered result.
+					deferred.then(function (renderer) {
+						callback(data ? renderer(data, helpers) : renderer);
+					});
+				} else {
+					// if the deferred is resolved, call the cached renderer instead
+					// this is because it's possible, with recursive deferreds to
+					// need to render a view while its deferred is _resolving_.  A _resolving_ deferred
+					// is a deferred that was just resolved and is calling back it's success callbacks.
+					// If a new success handler is called while resoliving, it does not get fired by
+					// jQuery's deferred system.  So instead of adding a new callback
+					// we use the cached renderer.
+					// We also add __view_id on the deferred so we can look up it's cached renderer.
+					// In the future, we might simply store either a deferred or the cached result.
+					if (deferred.state() === 'resolved' && deferred.__view_id) {
+						var currentRenderer = $view.cachedRenderers[deferred.__view_id];
+						return data ? currentRenderer(data, helpers) : currentRenderer;
+					} else {
+						// Otherwise, the deferred is complete, so
+						// set response to the result of the rendering.
+						deferred.then(function (renderer) {
+							response = data ? renderer(data, helpers) : renderer;
+						});
+					}
+				}
+
+				return response;
+			}
+		},
+
+		/**
+		 * @hide
+		 * Registers a view with `cached` object.  This is used
+		 * internally by this class and Mustache to hookup views.
+		 * @param  {String} id
+		 * @param  {String} text
+		 * @param  {String} type
+		 * @param  {can.Deferred} def
+		 */
+		registerView: function (id, text, type, def) {
+			// Get the renderer function.
+			var func = (type || $view.types[$view.ext])
+				.renderer(id, text);
+			def = def || new can.Deferred();
+
+			// Cache if we are caching.
+			if ($view.cache) {
+				$view.cached[id] = def;
+				def.__view_id = id;
+				$view.cachedRenderers[id] = func;
+			}
+
+			// Return the objects for the response's `dataTypes`
+			// (in this case view).
+			return def.resolve(func);
+		}
+	});
+
+	// Makes sure there's a template, if not, have `steal` provide a warning.
+	var checkText = function (text, url) {
+		if (!text.length) {
+
+		
+
+			throw "can.view: No template or empty template:" + url;
+		}
+	},
+		// `Returns a `view` renderer deferred.  
+		// `url` - The url to the template.  
+		// `async` - If the ajax request should be asynchronous.  
+		// Returns a deferred.
+		get = function (obj, async) {
+			var url = typeof obj === 'string' ? obj : obj.url,
+				suffix = obj.engine || url.match(/\.[\w\d]+$/),
+				type,
+				// If we are reading a script element for the content of the template,
+				// `el` will be set to that script element.
+				el,
+				// A unique identifier for the view (used for caching).
+				// This is typically derived from the element id or
+				// the url for the template.
+				id;
+
+			//If the url has a #, we assume we want to use an inline template
+			//from a script element and not current page's HTML
+			if (url.match(/^#/)) {
+				url = url.substr(1);
+			}
+			// If we have an inline template, derive the suffix from the `text/???` part.
+			// This only supports `<script>` tags.
+			if (el = document.getElementById(url)) {
+				suffix = '.' + el.type.match(/\/(x\-)?(.+)/)[2];
+			}
+
+			// If there is no suffix, add one.
+			if (!suffix && !$view.cached[url]) {
+				url += suffix = $view.ext;
+			}
+
+			if (can.isArray(suffix)) {
+				suffix = suffix[0];
+			}
+
+			// Convert to a unique and valid id.
+			id = $view.toId(url);
+
+			// If an absolute path, use `steal`/`require` to get it.
+			// You should only be using `//` if you are using an AMD loader like `steal` or `require` (not almond).
+			if (url.match(/^\/\//)) {
+				url = url.substr(2);
+				url = !window.steal ?
+					url :
+					steal.config()
+					.root.mapJoin("" + steal.id(url));
+			}
+
+			// Localize for `require` (not almond)
+			if (window.require) {
+				if (require.toUrl) {
+					url = require.toUrl(url);
+				}
+			}
+
+			// Set the template engine type.
+			type = $view.types[suffix];
+
+			// If it is cached, 
+			if ($view.cached[id]) {
+				// Return the cached deferred renderer.
+				return $view.cached[id];
+
+				// Otherwise if we are getting this from a `<script>` element.
+			} else if (el) {
+				// Resolve immediately with the element's `innerHTML`.
+				return $view.registerView(id, el.innerHTML, type);
+			} else {
+				// Make an ajax request for text.
+				var d = new can.Deferred();
+				can.ajax({
+					async: async,
+					url: url,
+					dataType: 'text',
+					error: function (jqXHR) {
+						checkText('', url);
+						d.reject(jqXHR);
+					},
+					success: function (text) {
+						// Make sure we got some text back.
+						checkText(text, url);
+						$view.registerView(id, text, type, d);
+					}
+				});
+				return d;
+			}
+		},
+		// Gets an `array` of deferreds from an `object`.
+		// This only goes one level deep.
+		getDeferreds = function (data) {
+			var deferreds = [];
+
+			// pull out deferreds
+			if (can.isDeferred(data)) {
+				return [data];
+			} else {
+				for (var prop in data) {
+					if (can.isDeferred(data[prop])) {
+						deferreds.push(data[prop]);
+					}
+				}
+			}
+			return deferreds;
+		},
+		// Gets the useful part of a resolved deferred.
+		// This is for `model`s and `can.ajax` that resolve to an `array`.
+		usefulPart = function (resolved) {
+			return can.isArray(resolved) && resolved[1] === 'success' ? resolved[0] : resolved;
+		};
+
+
+
+	can.extend($view, {
+		register: function (info) {
+			this.types['.' + info.suffix] = info;
+
+		
+
+			$view[info.suffix] = function (id, text) {
+				if (!text) {
+					// Return a nameless renderer
+					var renderer = function () {
+						return $view.frag(renderer.render.apply(this, arguments));
+					};
+					renderer.render = function () {
+						var renderer = info.renderer(null, id);
+						return renderer.apply(renderer, arguments);
+					};
+					return renderer;
+				}
+
+				return $view.preload(id, info.renderer(id, text));
+			};
+		},
+		registerScript: function (type, id, src) {
+			return 'can.view.preload(\'' + id + '\',' + $view.types['.' + type].script(id, src) + ');';
+		},
+		preload: function (id, renderer) {
+			var def = $view.cached[id] = new can.Deferred()
+				.resolve(function (data, helpers) {
+					return renderer.call(data, data, helpers);
+				});
+
+			function frag() {
+				return $view.frag(renderer.apply(this, arguments));
+			}
+			// expose the renderer for mustache
+			frag.render = renderer;
+
+			// set cache references (otherwise preloaded recursive views won't recurse properly)
+			def.__view_id = id;
+			$view.cachedRenderers[id] = renderer;
+
+			return frag;
+		}
+
+	});
+
+	return can;
+});
+/*!
+ * CanJS - 2.0.7
+ * http://canjs.us/
+ * Copyright (c) 2014 Bitovi
+ * Wed, 26 Mar 2014 16:12:27 GMT
+ * Licensed MIT
+ * Includes: CanJS default build
+ * Download from: http://canjs.us/
+ */
+define('can/compute',["can/util/library", "can/util/bind", "can/util/batch"], function (can, bind) {
+	var names = [
+		'__reading',
+		'__clearReading',
+		'__setReading'
+	],
+		setup = function (observed) {
+			var old = {};
+			for (var i = 0; i < names.length; i++) {
+				old[names[i]] = can[names[i]];
+			}
+			can.__reading = function (obj, attr) {
+				// Add the observe and attr that was read
+				// to `observed`
+				observed.push({
+					obj: obj,
+					attr: attr + ''
+				});
+			};
+			can.__clearReading = function () {
+				return observed.splice(0, observed.length);
+			};
+			can.__setReading = function (o) {
+				[].splice.apply(observed, [
+					0,
+					observed.length
+				].concat(o));
+			};
+			return old;
+		},
+		// empty default function
+		k = function () {};
+	// returns the
+	// - observes and attr methods are called by func
+	// - the value returned by func
+	// ex: `{value: 100, observed: [{obs: o, attr: "completed"}]}`
+	var getValueAndObserved = function (func, self) {
+		var observed = [],
+			old = setup(observed),
+			// Call the "wrapping" function to get the value. `observed`
+			// will have the observe/attribute pairs that were read.
+			value = func.call(self);
+		// Set back so we are no longer reading.
+		can.simpleExtend(can, old);
+		return {
+			value: value,
+			observed: observed
+		};
+	},
+		// Calls `callback(newVal, oldVal)` everytime an observed property
+		// called within `getterSetter` is changed and creates a new result of `getterSetter`.
+		// Also returns an object that can teardown all event handlers.
+		computeBinder = function (getterSetter, context, callback, computeState) {
+			// track what we are observing
+			var observing = {},
+				// a flag indicating if this observe/attr pair is already bound
+				matched = true,
+				// the data to return
+				data = {
+					value: undefined,
+					teardown: function () {
+						for (var name in observing) {
+							var ob = observing[name];
+							ob.observe.obj.unbind(ob.observe.attr, onchanged);
+							delete observing[name];
+						}
+					}
+				}, batchNum;
+			// when a property value is changed
+			var onchanged = function (ev) {
+				// If the compute is no longer bound (because the same change event led to an unbind)
+				// then do not call getValueAndBind, or we will leak bindings.
+				if (computeState && !computeState.bound) {
+					return;
+				}
+				if (ev.batchNum === undefined || ev.batchNum !== batchNum) {
+					// store the old value
+					var oldValue = data.value,
+						// get the new value
+						newvalue = getValueAndBind();
+					// update the value reference (in case someone reads)
+					data.value = newvalue;
+					// if a change happened
+					if (newvalue !== oldValue) {
+						callback(newvalue, oldValue);
+					}
+					batchNum = batchNum = ev.batchNum;
+				}
+			};
+			// gets the value returned by `getterSetter` and also binds to any attributes
+			// read by the call
+			var getValueAndBind = function () {
+				var info = getValueAndObserved(getterSetter, context),
+					newObserveSet = info.observed;
+				var value = info.value,
+					ob;
+				matched = !matched;
+				// go through every attribute read by this observe
+				for (var i = 0, len = newObserveSet.length; i < len; i++) {
+					ob = newObserveSet[i];
+					// if the observe/attribute pair is being observed
+					if (observing[ob.obj._cid + '|' + ob.attr]) {
+						// mark at as observed
+						observing[ob.obj._cid + '|' + ob.attr].matched = matched;
+					} else {
+						// otherwise, set the observe/attribute on oldObserved, marking it as being observed
+						observing[ob.obj._cid + '|' + ob.attr] = {
+							matched: matched,
+							observe: ob
+						};
+						ob.obj.bind(ob.attr, onchanged);
+					}
+				}
+				// Iterate through oldObserved, looking for observe/attributes
+				// that are no longer being bound and unbind them
+				for (var name in observing) {
+					ob = observing[name];
+					if (ob.matched !== matched) {
+						ob.observe.obj.unbind(ob.observe.attr, onchanged);
+						delete observing[name];
+					}
+				}
+				return value;
+			};
+			// set the initial value
+			data.value = getValueAndBind();
+			data.isListening = !can.isEmptyObject(observing);
+			return data;
+		};
+	var isObserve = function (obj) {
+		return obj instanceof can.Map || obj && obj.__get;
+	};
+	// if no one is listening ... we can not calculate every time
+	can.compute = function (getterSetter, context, eventName) {
+		if (getterSetter && getterSetter.isComputed) {
+			return getterSetter;
+		}
+		// stores the result of computeBinder
+		var computedData,
+			// the computed object
+			computed,
+			// an object that keeps track if the computed is bound
+			// onchanged needs to know this. It's possible a change happens and results in
+			// something that unbinds the compute, it needs to not to try to recalculate who it
+			// is listening to
+			computeState = {
+				bound: false,
+				hasDependencies: false
+			},
+			// The following functions are overwritten depending on how compute() is called
+			// a method to setup listening
+			on = k,
+			// a method to teardown listening
+			off = k,
+			// the current cached value (only valid if bound = true)
+			value,
+			// how to read the value
+			get = function () {
+				return value;
+			},
+			// sets the value
+			set = function (newVal) {
+				value = newVal;
+			},
+			// this compute can be a dependency of other computes
+			canReadForChangeEvent = true,
+			// save for clone
+			args = can.makeArray(arguments),
+			updater = function (newValue, oldValue) {
+				value = newValue;
+				// might need a way to look up new and oldVal
+				can.batch.trigger(computed, 'change', [
+					newValue,
+					oldValue
+				]);
+			},
+			// the form of the arguments
+			form;
+		computed = function (newVal) {
+			// setting ...
+			if (arguments.length) {
+				// save a reference to the old value
+				var old = value;
+				// setter may return a value if
+				// setter is for a value maintained exclusively by this compute
+				var setVal = set.call(context, newVal, old);
+				// if this has dependencies return the current value
+				if (computed.hasDependencies) {
+					return get.call(context);
+				}
+				if (setVal === undefined) {
+					// it's possible, like with the DOM, setting does not
+					// fire a change event, so we must read
+					value = get.call(context);
+				} else {
+					value = setVal;
+				}
+				// fire the change
+				if (old !== value) {
+					can.batch.trigger(computed, 'change', [
+						value,
+						old
+					]);
+				}
+				return value;
+			} else {
+				// Another compute wants to bind to this compute
+				if (can.__reading && canReadForChangeEvent) {
+					// Tell the compute to listen to change on this computed
+					can.__reading(computed, 'change');
+					// We are going to bind on this compute.
+					// If we are not bound, we should bind so that
+					// we don't have to re-read to get the value of this compute.
+					if (!computeState.bound) {
+						can.compute.temporarilyBind(computed);
+					}
+				}
+				// if we are bound, use the cached value
+				if (computeState.bound) {
+					return value;
+				} else {
+					return get.call(context);
+				}
+			}
+		};
+		if (typeof getterSetter === 'function') {
+			set = getterSetter;
+			get = getterSetter;
+			canReadForChangeEvent = eventName === false ? false : true;
+			computed.hasDependencies = false;
+			on = function (update) {
+				computedData = computeBinder(getterSetter, context || this, update, computeState);
+				computed.hasDependencies = computedData.isListening;
+				value = computedData.value;
+			};
+			off = function () {
+				if (computedData) {
+					computedData.teardown();
+				}
+			};
+		} else if (context) {
+			if (typeof context === 'string') {
+				// `can.compute(obj, "propertyName", [eventName])`
+				var propertyName = context,
+					isObserve = getterSetter instanceof can.Map;
+				if (isObserve) {
+					computed.hasDependencies = true;
+				}
+				get = function () {
+					if (isObserve) {
+						return getterSetter.attr(propertyName);
+					} else {
+						return getterSetter[propertyName];
+					}
+				};
+				set = function (newValue) {
+					if (isObserve) {
+						getterSetter.attr(propertyName, newValue);
+					} else {
+						getterSetter[propertyName] = newValue;
+					}
+				};
+				var handler;
+				on = function (update) {
+					handler = function () {
+						update(get(), value);
+					};
+					can.bind.call(getterSetter, eventName || propertyName, handler);
+					// use getValueAndObserved because
+					// we should not be indicating that some parent
+					// reads this property if it happens to be binding on it
+					value = getValueAndObserved(get)
+						.value;
+				};
+				off = function () {
+					can.unbind.call(getterSetter, eventName || propertyName, handler);
+				};
+			} else {
+				// `can.compute(initialValue, setter)`
+				if (typeof context === 'function') {
+					value = getterSetter;
+					set = context;
+					context = eventName;
+					form = 'setter';
+				} else {
+					// `can.compute(initialValue,{get:, set:, on:, off:})`
+					value = getterSetter;
+					var options = context,
+						oldUpdater = updater;
+						
+					updater = function(){
+						var newVal = get.call(context);
+						if(newVal !== value) {
+							oldUpdater(newVal, value);
+						}
+					};
+					get = options.get || get;
+					set = options.set || set;
+					on = options.on || on;
+					off = options.off || off;
+				}
+			}
+		} else {
+			// `can.compute(5)`
+			value = getterSetter;
+		}
+		can.cid(computed, 'compute');
+		return can.simpleExtend(computed, {
+			/**
+			 * @property {Boolean} can.computed.isComputed compute.isComputed
+			 * @parent can.compute
+			 * Whether the value of the compute has been computed yet.
+			 */
+			isComputed: true,
+			_bindsetup: function () {
+				computeState.bound = true;
+				// setup live-binding
+				// while binding, this does not count as a read
+				var oldReading = can.__reading;
+				delete can.__reading;
+				on.call(this, updater);
+				can.__reading = oldReading;
+			},
+			_bindteardown: function () {
+				off.call(this, updater);
+				computeState.bound = false;
+			},
+			/**
+			 * @function can.computed.bind compute.bind
+			 * @parent can.compute
+			 * @description Bind an event handler to a compute.
+			 * @signature `compute.bind(eventType, handler)`
+			 * @param {String} eventType The event to bind this handler to.
+			 * The only event type that computes emit is _change_.
+			 * @param {function({Object},{*},{*})} handler The handler to call when the event happens.
+			 * The handler should have three parameters:
+			 *
+			 * - _event_ is the event object.
+			 * - _newVal_ is the newly-computed value of the compute.
+			 * - _oldVal_ is the value of the compute before it changed.
+			 *
+			 * `bind` lets you listen to a compute to know when it changes. It works just like
+			 * can.Map's `[can.Map.prototype.bind bind]`:
+			 * @codestart
+			 * var tally = can.compute(0);
+			 * tally.bind('change', function(ev, newVal, oldVal) {
+			 *     console.log('The tally is now at ' + newVal + '.');
+			 * });
+			 *
+			 * tally(tally() + 5); // The log reads:
+			 *                     // 'The tally is now at 5.'
+			 * @codeend
+			 */
+			bind: can.bindAndSetup,
+			/**
+			 * @function computed.unbind compute.unbind
+			 * @parent can.compute
+			 * @description Unbind an event handler from a compute.
+			 * @signature `compute.unbind(eventType[, handler])`
+			 * @param {String} eventType The type of event to unbind.
+			 * The only event type available for computes is _change_.
+			 * @param {function} [handler] If given, the handler to unbind.
+			 * If _handler_ is not supplied, all handlers bound to _eventType_
+			 * will be removed.
+			 */
+			unbind: can.unbindAndTeardown,
+			clone: function (context) {
+				if (context) {
+					if (form === 'setter') {
+						args[2] = context;
+					} else {
+						args[1] = context;
+					}
+				}
+				return can.compute.apply(can, args);
+			}
+		});
+	};
+	// a list of temporarily bound computes
+	var computes, unbindComputes = function () {
+			for (var i = 0, len = computes.length; i < len; i++) {
+				computes[i].unbind('change', k);
+			}
+			computes = null;
+		};
+	// Binds computes for a moment to retain their value and prevent caching
+	can.compute.temporarilyBind = function (compute) {
+		compute.bind('change', k);
+		if (!computes) {
+			computes = [];
+			setTimeout(unbindComputes, 10);
+		}
+		computes.push(compute);
+	};
+	can.compute.binder = computeBinder;
+	can.compute.truthy = function (compute) {
+		return can.compute(function () {
+			var res = compute();
+			if (typeof res === 'function') {
+				res = res();
+			}
+			return !!res;
+		});
+	};
+
+	can.compute.read = function (parent, reads, options) {
+		options = options || {};
+		// `cur` is the current value.
+		var cur = parent,
+			type,
+			// `prev` is the object we are reading from.
+			prev,
+			// `foundObs` did we find an observable.
+			foundObs;
+		for (var i = 0, readLength = reads.length; i < readLength; i++) {
+			// Update what we are reading from.
+			prev = cur;
+			// Read from the compute. We can't read a property yet.
+			if (prev && prev.isComputed) {
+				if (options.foundObservable) {
+					options.foundObservable(prev, i);
+				}
+				prev = prev();
+			}
+			// Look to read a property from something.
+			if (isObserve(prev)) {
+				if (!foundObs && options.foundObservable) {
+					options.foundObservable(prev, i);
+				}
+				foundObs = 1;
+				// is it a method on the prototype?
+				if (typeof prev[reads[i]] === 'function' && prev.constructor.prototype[reads[i]] === prev[reads[i]]) {
+					// call that method
+					if (options.returnObserveMethods) {
+						cur = cur[reads[i]];
+					} else if (reads[i] === 'constructor' && prev instanceof can.Construct) {
+						cur = prev[reads[i]];
+					} else {
+						cur = prev[reads[i]].apply(prev, options.args || []);
+					}
+				} else {
+					// use attr to get that value
+					cur = cur.attr(reads[i]);
+				}
+			} else {
+				// just do the dot operator
+				cur = prev[reads[i]];
+			}
+			// If it's a compute, get the compute's value
+			// unless we are at the end of the 
+			if (cur && cur.isComputed && (!options.isArgument && i < readLength - 1)) {
+				if (!foundObs && options.foundObservable) {
+					options.foundObservable(prev, i + 1);
+				}
+				cur = cur();
+			}
+			type = typeof cur;
+			// if there are properties left to read, and we don't have an object, early exit
+			if (i < reads.length - 1 && (cur === null || type !== 'function' && type !== 'object')) {
+				if (options.earlyExit) {
+					options.earlyExit(prev, i, cur);
+				}
+				// return undefined so we know this isn't the right value
+				return {
+					value: undefined,
+					parent: prev
+				};
+			}
+		}
+		// handle an ending function
+		if (typeof cur === 'function') {
+			if (options.isArgument) {
+				if (!cur.isComputed && options.proxyMethods !== false) {
+					cur = can.proxy(cur, prev);
+				}
+			} else {
+				if (cur.isComputed && !foundObs && options.foundObservable) {
+					options.foundObservable(cur, i);
+				}
+				cur = cur.call(prev);
+			}
+		}
+		// if we don't have a value, exit early.
+		if (cur === undefined) {
+			if (options.earlyExit) {
+				options.earlyExit(prev, i - 1);
+			}
+		}
+		return {
+			value: cur,
+			parent: prev
+		};
+	};
+
+	return can.compute;
+});
+/*!
+ * CanJS - 2.0.7
+ * http://canjs.us/
+ * Copyright (c) 2014 Bitovi
+ * Wed, 26 Mar 2014 16:12:27 GMT
+ * Licensed MIT
+ * Includes: CanJS default build
+ * Download from: http://canjs.us/
+ */
+define('can/view/scope',["can/util/library", "can/construct", "can/map", "can/list", "can/view", "can/compute"], function (can) {
+	var escapeReg = /(\\)?\./g;
+	var escapeDotReg = /\\\./g;
+	var getNames = function (attr) {
+		var names = [],
+			last = 0;
+		attr.replace(escapeReg, function (first, second, index) {
+			if (!second) {
+				names.push(attr.slice(last, index)
+					.replace(escapeDotReg, '.'));
+				last = index + first.length;
+			}
+		});
+		names.push(attr.slice(last)
+			.replace(escapeDotReg, '.'));
+		return names;
+	};
+	/**
+	 * @add can.view.Scope
+	 */
+	var Scope = can.Construct.extend(
+
+		/**
+		 * @static
+		 */
+		{
+			// reads properties from a parent.  A much more complex version of getObject.
+			/**
+			 * @function can.view.Scope.read read
+			 * @parent can.view.Scope.static
+			 *
+			 * @signature `Scope.read(parent, reads, options)`
+			 *
+			 * Read properties from an object.
+			 *
+			 * @param {*} parent A parent object to read properties from.
+			 * @param {Array<String>} reads An array of properties to read.
+			 * @param {can.view.Scope.readOptions} options Configures
+			 * how to read properties and values and register callbacks
+			 *
+			 * @return {{value: *, parent: *}} Returns an object that
+			 * provides the value and parent object.
+			 *
+			 * @option {*} value The value found by reading `reads` properties.  If
+			 * no value was found, value will be undefined.
+			 *
+			 * @option {*} parent The most immediate parent object of the value specified by `key`.
+			 *
+			 * @body
+			 *
+			 *
+			 */
+			read: can.compute.read
+		},
+		/**
+		 * @prototype
+		 */
+		{
+			init: function (context, parent) {
+				this._context = context;
+				this._parent = parent;
+			},
+			/**
+			 * @function can.view.Scope.prototype.attr
+			 *
+			 * Reads a value from the current context or parent contexts.
+			 *
+			 * @param {can.Mustache.key} key A dot seperated path.  Use `"\."` if you have a
+			 * property name that includes a dot.
+			 *
+			 * @return {*} The found value or undefined if no value is found.
+			 *
+			 * @body
+			 *
+			 * ## Use
+			 *
+			 * `scope.attr(key)` looks up a value in the current scope's
+			 * context, if a value is not found, parent scope's context
+			 * will be explored.
+			 *
+			 *     var list = [{name: "Justin"},{name: "Brian"}],
+			 *     justin = list[0];
+			 *
+			 *     var curScope = new can.view.Scope(list).add(justin);
+			 *
+			 *     curScope.attr("name") //-> "Justin"
+			 *     curScope.attr("length") //-> 2
+			 */
+			attr: function (key) {
+				// reads for whatever called before attr.  It's possible
+				// that this.read clears them.  We want to restore them.
+				var previousReads = can.__clearReading && can.__clearReading(),
+					res = this.read(key, {
+						isArgument: true,
+						returnObserveMethods: true,
+						proxyMethods: false
+					})
+						.value;
+				if (can.__setReading) {
+					can.__setReading(previousReads);
+				}
+				return res;
+			},
+			/**
+			 * @function can.view.Scope.prototype.add
+			 *
+			 * Creates a new scope with its parent set as the current scope.
+			 *
+			 * @param {*} context The context of the new scope object.
+			 *
+			 * @return {can.view.Scope}  A scope object.
+			 *
+			 * @body
+			 *
+			 * ## Use
+			 *
+			 * `scope.add(context)` creates a new scope object that
+			 * first looks up values in context and then in the
+			 * parent `scope` object.
+			 *
+			 *     var list = [{name: "Justin"},{name: "Brian"}],
+			 *      justin = list[0];
+			 *
+			 *     var curScope = new can.view.Scope(list).add(justin);
+			 *
+			 *     curScope.attr("name") //-> "Justin"
+			 *     curScope.attr("length") //-> 2
+			 */
+			add: function (context) {
+				if (context !== this._context) {
+					return new this.constructor(context, this);
+				} else {
+					return this;
+				}
+			},
+			/**
+			 * @function can.view.Scope.prototype.computeData
+			 *
+			 * @description Provides a compute that represents a
+			 * key's value and other information about where the value was found.
+			 *
+			 *
+			 * @param {can.Mustache.key} key A dot seperated path.  Use `"\."` if you have a
+			 * property name that includes a dot.
+			 *
+			 * @param {can.view.Scope.readOptions} [options] Options that configure how the `key` gets read.
+			 *
+			 * @return {{}} An object with the following values:
+			 *
+			 * @option {can.compute} compute A compute that returns the
+			 * value of `key` looked up in the scope's context or parent context. This compute can
+			 * also be written to, which will set the observable attribute or compute value at the
+			 * location represented by the key.
+			 *
+			 * @option {can.view.Scope} scope The scope the key was found within. The key might have
+			 * been found in a parent scope.
+			 *
+			 * @option {*} initialData The initial value at the key's location.
+			 *
+			 * @body
+			 *
+			 * ## Use
+			 *
+			 * `scope.computeData(key, options)` is used heavily by [can.Mustache] to get the value of
+			 * a [can.Mustache.key key] value in a template. Configure how it reads values in the
+			 * scope and what values it returns with the [can.view.Scope.readOptions options] argument.
+			 *
+			 *     var context = new Map({
+			 *       name: {first: "Curtis"}
+			 *     })
+			 *     var scope = new can.view.Scope(context)
+			 *     var computeData = scope.computeData("name.first");
+			 *
+			 *     computeData.scope === scope //-> true
+			 *     computeData.initialValue    //-> "Curtis"
+			 *     computeData.compute()       //-> "Curtis"
+			 *
+			 * The `compute` value is writable.  For example:
+			 *
+			 *     computeData.compute("Andy")
+			 *     context.attr("name.first") //-> "Andy"
+			 *
+			 */
+			computeData: function (key, options) {
+				options = options || {
+					args: []
+				};
+				var self = this,
+					rootObserve, rootReads, computeData = {
+						compute: can.compute(function (newVal) {
+							if (arguments.length) {
+								// check that there's just a compute with nothing from it ...
+								if (rootObserve.isComputed && !rootReads.length) {
+									rootObserve(newVal);
+								} else {
+									var last = rootReads.length - 1;
+									Scope.read(rootObserve, rootReads.slice(0, last))
+										.value.attr(rootReads[last], newVal);
+								}
+							} else {
+								if (rootObserve) {
+									return Scope.read(rootObserve, rootReads, options)
+										.value;
+								}
+								// otherwise, go get the value
+								var data = self.read(key, options);
+								rootObserve = data.rootObserve;
+								rootReads = data.reads;
+								computeData.scope = data.scope;
+								computeData.initialValue = data.value;
+								return data.value;
+							}
+						})
+					};
+				return computeData;
+			},
+			/**
+			 * @hide
+			 * @function can.view.Scope.prototype.read read
+			 *
+			 * Read a key value from the scope and provide useful information
+			 * about what was found along the way.
+			 *
+			 * @param {can.Mustache.key} attr A dot seperated path.  Use `"\."` if you have a property name that includes a dot.
+			 * @param {can.view.Scope.readOptions} options that configure how this gets read.
+			 *
+			 * @return {{}}
+			 *
+			 * @option {Object} parent the value's immediate parent
+			 *
+			 * @option {can.Map|can.compute} rootObserve the first observable to read from.
+			 *
+			 * @option {Array<String>} reads An array of properties that can be used to read from the rootObserve to get the value.
+			 *
+			 * @option {*} value the found value
+			 */
+			read: function (attr, options) {
+				// check if we should be running this on a parent.
+				if (attr.substr(0, 3) === '../') {
+					return this._parent.read(attr.substr(3), options);
+				} else if (attr === '..') {
+					return {
+						value: this._parent._context
+					};
+				} else if (attr === '.' || attr === 'this') {
+					return {
+						value: this._context
+					};
+				}
+				// Split the name up.
+				var names = attr.indexOf('\\.') === -1 ?
+				// Reference doesn't contain escaped periods
+				attr.split('.')
+				// Reference contains escaped periods (`a.b\c.foo` == `a["b.c"].foo)
+				: getNames(attr),
+					// The current context (a scope is just data and a parent scope).
+					context,
+					// The current scope.
+					scope = this,
+					// While we are looking for a value, we track the most likely place this value will be found.  
+					// This is so if there is no me.name.first, we setup a listener on me.name.
+					// The most likely canidate is the one with the most "read matches" "lowest" in the
+					// context chain.
+					// By "read matches", we mean the most number of values along the key.
+					// By "lowest" in the context chain, we mean the closest to the current context.
+					// We track the starting position of the likely place with `defaultObserve`.
+					defaultObserve,
+					// Tracks how to read from the defaultObserve.
+					defaultReads = [],
+					// Tracks the highest found number of "read matches".
+					defaultPropertyDepth = -1,
+					// `scope.read` is designed to be called within a compute, but
+					// for performance reasons only listens to observables within one context.
+					// This is to say, if you have me.name in the current context, but me.name.first and
+					// we are looking for me.name.first, we don't setup bindings on me.name and me.name.first.
+					// To make this happen, we clear readings if they do not find a value.  But,
+					// if that path turns out to be the default read, we need to restore them.  This
+					// variable remembers those reads so they can be restored.
+					defaultComputeReadings,
+					// Tracks the default's scope.
+					defaultScope,
+					// Tracks the first found observe.
+					currentObserve,
+					// Tracks the reads to get the value for a scope.
+					currentReads;
+				// While there is a scope/context to look in.
+				while (scope) {
+					// get the context
+					context = scope._context;
+					if (context !== null) {
+						// Lets try this context
+						var data = Scope.read(context, names, can.simpleExtend({
+							// Called when an observable is found.
+							foundObservable: function (observe, nameIndex) {
+								// Save the current observe.
+								currentObserve = observe;
+								currentReads = names.slice(nameIndex);
+							},
+							// Called when we were unable to find a value.
+							earlyExit: function (parentValue, nameIndex) {
+								// If this has more matching values,
+								if (nameIndex > defaultPropertyDepth) {
+									// save the state.
+									defaultObserve = currentObserve;
+									defaultReads = currentReads;
+									defaultPropertyDepth = nameIndex;
+									defaultScope = scope;
+									// Clear and save readings so next attempt does not use these readings
+									defaultComputeReadings = can.__clearReading && can.__clearReading();
+								}
+							}
+						}, options));
+						// Found a matched reference.
+						if (data.value !== undefined) {
+							return {
+								scope: scope,
+								rootObserve: currentObserve,
+								value: data.value,
+								reads: currentReads
+							};
+						}
+					}
+					// Prevent prior readings.
+					if (can.__clearReading) {
+						can.__clearReading();
+					}
+					// Move up to the next scope.
+					scope = scope._parent;
+				}
+				// If there was a likely observe.
+				if (defaultObserve) {
+					// Restore reading for previous compute
+					if (can.__setReading) {
+						can.__setReading(defaultComputeReadings);
+					}
+					return {
+						scope: defaultScope,
+						rootObserve: defaultObserve,
+						reads: defaultReads,
+						value: undefined
+					};
+				} else {
+					// we found nothing and no observable
+					return {
+						names: names,
+						value: undefined
+					};
+				}
+			}
+		});
+	can.view.Scope = Scope;
+	return Scope;
+});
+/*!
+ * CanJS - 2.0.7
+ * http://canjs.us/
+ * Copyright (c) 2014 Bitovi
+ * Wed, 26 Mar 2014 16:12:27 GMT
+ * Licensed MIT
+ * Includes: CanJS default build
+ * Download from: http://canjs.us/
+ */
+define('can/view/elements',["can/util/library"], function (can) {
+	/**
+	 * @property {Object} can.view.elements
+	 * @parent can.view
+	 *
+	 * Provides helper methods for and information about the behavior
+	 * of DOM elements.
+	 */
+	var elements = {
+		tagToContentPropMap: {
+			option: 'textContent' in document.createElement('option') ? 'textContent' : 'innerText',
+			textarea: 'value'
+		},
+		/**
+		 * @property {Object.<String,(String|Boolean|function)>} can.view.elements.attrMap
+		 * @parent can.view.elements
+		 *
+		 *
+		 * A mapping of
+		 * special attributes to their JS property. For example:
+		 *
+		 *     "class" : "className"
+		 *
+		 * means get or set `element.className`. And:
+		 *
+		 *      "checked" : true
+		 *
+		 * means set `element.checked = true`.
+		 *
+		 *
+		 * If the attribute name is not found, it's assumed to use
+		 * `element.getAttribute` and `element.setAttribute`.
+		 */
+		attrMap: {
+			'class': 'className',
+			'value': 'value',
+			'innerText': 'innerText',
+			'textContent': 'textContent',
+			'checked': true,
+			'disabled': true,
+			'readonly': true,
+			'required': true,
+			src: function (el, val) {
+				if (val === null || val === '') {
+					el.removeAttribute('src');
+				} else {
+					el.setAttribute('src', val);
+				}
+			}
+		},
+		attrReg: /([^\s=]+)[\s]*=[\s]*/,
+		// elements whos default value we should set
+		defaultValue: ["input", "textarea"],
+		// a map of parent element to child elements
+		/**
+		 * @property {Object.<String,String>} can.view.elements.tagMap
+		 * @parent can.view.elements
+		 *
+		 * A mapping of parent node names to child node names that can be inserted within
+		 * the parent node name.  For example: `table: "tbody"` means that
+		 * if you want a placeholder element within a `table`, a `tbody` will be
+		 * created.
+		 */
+		tagMap: {
+			'': 'span',
+			table: 'tbody',
+			tr: 'td',
+			ol: 'li',
+			ul: 'li',
+			tbody: 'tr',
+			thead: 'tr',
+			tfoot: 'tr',
+			select: 'option',
+			optgroup: 'option'
+		},
+		// a tag's parent element
+		reverseTagMap: {
+			tr: 'tbody',
+			option: 'select',
+			td: 'tr',
+			th: 'tr',
+			li: 'ul'
+		},
+		// Used to determine the parentNode if el is directly within a documentFragment
+		getParentNode: function (el, defaultParentNode) {
+			return defaultParentNode && el.parentNode.nodeType === 11 ? defaultParentNode : el.parentNode;
+		},
+		// Set an attribute on an element
+		setAttr: function (el, attrName, val) {
+			var tagName = el.nodeName.toString()
+				.toLowerCase(),
+				prop = elements.attrMap[attrName];
+			// if this is a special property
+			if (typeof prop === "function") {
+				prop(el, val);
+			} else if (prop === true && attrName === "checked" && el.type === "radio") {
+				// IE7 bugs sometimes if defaultChecked isn't set first
+				if (can.inArray(tagName, elements.defaultValue) >= 0) {
+					el.defaultChecked = true;
+				}
+				el[attrName] = true;
+			} else if (prop === true) {
+				el[attrName] = true;
+			} else if (prop) {
+				// set the value as true / false
+				el[prop] = val;
+				if (prop === 'value' && can.inArray(tagName, elements.defaultValue) >= 0) {
+					el.defaultValue = val;
+				}
+			} else {
+				el.setAttribute(attrName, val);
+			}
+		},
+		// Gets the value of an attribute.
+		getAttr: function (el, attrName) {
+			// Default to a blank string for IE7/8
+			return (elements.attrMap[attrName] && el[elements.attrMap[attrName]] ? el[elements.attrMap[attrName]] : el.getAttribute(attrName)) || '';
+		},
+		// Removes the attribute.
+		removeAttr: function (el, attrName) {
+			var setter = elements.attrMap[attrName];
+			if (setter === true) {
+				el[attrName] = false;
+			} else if (typeof setter === 'string') {
+				el[setter] = '';
+			} else {
+				el.removeAttribute(attrName);
+			}
+		},
+		// Gets a "pretty" value for something
+		contentText: function (text) {
+			if (typeof text === 'string') {
+				return text;
+			}
+			// If has no value, return an empty string.
+			if (!text && text !== 0) {
+				return '';
+			}
+			return '' + text;
+		},
+		/**
+		 * @function can.view.elements.after
+		 * @parent can.view.elements
+		 *
+		 * Inserts newFrag after oldElements.
+		 *
+		 * @param {Array.<HTMLElement>} oldElements
+		 * @param {DocumentFragment} newFrag
+		 */
+		after: function (oldElements, newFrag) {
+			var last = oldElements[oldElements.length - 1];
+			// Insert it in the `document` or `documentFragment`
+			if (last.nextSibling) {
+				can.insertBefore(last.parentNode, newFrag, last.nextSibling);
+			} else {
+				can.appendChild(last.parentNode, newFrag);
+			}
+		},
+		/**
+		 * @function can.view.elements.replace
+		 * @parent can.view.elements
+		 *
+		 * Replaces `oldElements` with `newFrag`
+		 *
+		 * @param {Array.<HTMLElement>} oldElements
+		 * @param {DocumentFragment} newFrag
+		 */
+		replace: function (oldElements, newFrag) {
+			elements.after(oldElements, newFrag);
+			can.remove(can.$(oldElements));
+		}
+	};
+	// TODO: this doesn't seem to be doing anything
+	// feature detect if setAttribute works with styles
+	(function () {
+		// feature detect if
+		var div = document.createElement('div');
+		div.setAttribute('style', 'width: 5px');
+		div.setAttribute('style', 'width: 10px');
+		// make style use cssText
+		elements.attrMap.style = function (el, val) {
+			el.style.cssText = val || '';
+		};
+	}());
+	return elements;
+});
+/*!
+ * CanJS - 2.0.7
+ * http://canjs.us/
+ * Copyright (c) 2014 Bitovi
+ * Wed, 26 Mar 2014 16:12:27 GMT
+ * Licensed MIT
+ * Includes: CanJS default build
+ * Download from: http://canjs.us/
+ */
+define('can/view/scanner',["can/view", "can/view/elements"], function (can, elements) {
+
+	/**
+	 * Helper(s)
+	 */
+	var newLine = /(\r|\n)+/g,
+		// Escapes characters starting with `\`.
+		clean = function (content) {
+			return content.split('\\')
+				.join('\\\\')
+				.split('\n')
+				.join('\\n')
+				.split('"')
+				.join('\\"')
+				.split('\t')
+				.join('\\t');
+		},
+		// Returns a tagName to use as a temporary placeholder for live content
+		// looks forward ... could be slow, but we only do it when necessary
+		getTag = function (tagName, tokens, i) {
+			// if a tagName is provided, use that
+			if (tagName) {
+				return tagName;
+			} else {
+				// otherwise go searching for the next two tokens like "<",TAG
+				while (i < tokens.length) {
+					if (tokens[i] === '<' && elements.reverseTagMap[tokens[i + 1]]) {
+						return elements.reverseTagMap[tokens[i + 1]];
+					}
+					i++;
+				}
+			}
+			return '';
+		}, bracketNum = function (content) {
+			return content.split('{')
+				.length - content.split('}')
+				.length;
+		}, myEval = function (script) {
+			eval(script);
+		},
+		attrReg = /([^\s]+)[\s]*=[\s]*$/,
+		// Commands for caching.
+		startTxt = 'var ___v1ew = [];',
+		finishTxt = 'return ___v1ew.join(\'\')',
+		put_cmd = '___v1ew.push(\n',
+		insert_cmd = put_cmd,
+		// Global controls (used by other functions to know where we are).
+		// Are we inside a tag?
+		htmlTag = null,
+		// Are we within a quote within a tag?
+		quote = null,
+		// What was the text before the current quote? (used to get the `attr` name)
+		beforeQuote = null,
+		// Whether a rescan is in progress
+		rescan = null,
+		getAttrName = function () {
+			var matches = beforeQuote.match(attrReg);
+			return matches && matches[1];
+		},
+		// Used to mark where the element is.
+		status = function () {
+			// `t` - `1`.
+			// `h` - `0`.
+			// `q` - String `beforeQuote`.
+			return quote ? '\'' + getAttrName() + '\'' : htmlTag ? 1 : 0;
+		},
+		// returns the top of a stack
+		top = function (stack) {
+			return stack[stack.length - 1];
+		},
+		// characters that automatically mean a custom element
+		automaticCustomElementCharacters = /[-\:]/,
+		Scanner;
+
+	/**
+	 * @constructor can.view.Scanner
+	 *
+	 * can.view.Scanner is used to convert a template into a JavaScript function.  That
+	 * function is called to produce a rendered result as a string. Often
+	 * the rendered result will include data-view-id attributes on elements that
+	 * will be processed after the template is used to create a document fragment.
+	 *
+	 *
+	 * @param {{text: can.view.Scanner.text, tokens: Array<can.view.Scanner.token>, helpers: Array<can.view.Scanner.helpers>}}
+	 */
+	//
+	/**
+	 * @typedef {{0:String,}}
+	 */
+
+	can.view.Scanner = Scanner = function (options) {
+		// Set options on self
+		can.extend(this, {
+			/**
+			 * @typedef {{start: String, escape: String, scope: String, options: String}}  can.view.Scanner.text
+			 */
+			text: {},
+			tokens: []
+		}, options);
+		// make sure it's an empty string if it's not
+		this.text.options = this.text.options || '';
+		// Cache a token lookup
+		this.tokenReg = [];
+		this.tokenSimple = {
+			"<": "<",
+			">": ">",
+			'"': '"',
+			"'": "'"
+		};
+		this.tokenComplex = [];
+		this.tokenMap = {};
+		for (var i = 0, token; token = this.tokens[i]; i++) {
+			/**
+			 * Token data structure (complex token and rescan function are optional):
+			 * [
+			 *	"token name",
+			 *	"simple token or abbreviation",
+			 *	/complex token regexp/,
+			 *	function(content) {
+			 *		// Rescan Function
+			 *		return {
+			 *			before: '\n',
+			 *			content: content.trim(),
+			 *			after: '\n'
+			 *		}
+			 * ]
+			 */
+
+			// Save complex mappings (custom regexp)
+			if (token[2]) {
+				this.tokenReg.push(token[2]);
+				this.tokenComplex.push({
+					abbr: token[1],
+					re: new RegExp(token[2]),
+					rescan: token[3]
+				});
+			}
+			// Save simple mappings (string only, no regexp)
+			else {
+				this.tokenReg.push(token[1]);
+				this.tokenSimple[token[1]] = token[0];
+			}
+			this.tokenMap[token[0]] = token[1];
+		}
+
+		// Cache the token registry.
+		this.tokenReg = new RegExp("(" + this.tokenReg.slice(0)
+			.concat(["<", ">", '"', "'"])
+			.join("|") + ")", "g");
+	};
+
+	Scanner.attributes = {};
+	Scanner.regExpAttributes = {};
+
+	Scanner.attribute = function (attribute, callback) {
+		if (typeof attribute === 'string') {
+			Scanner.attributes[attribute] = callback;
+		} else {
+			Scanner.regExpAttributes[attribute] = {
+				match: attribute,
+				callback: callback
+			};
+		}
+	};
+	Scanner.hookupAttributes = function (options, el) {
+		can.each(options && options.attrs || [], function (attr) {
+			options.attr = attr;
+			if (Scanner.attributes[attr]) {
+				Scanner.attributes[attr](options, el);
+			} else {
+				can.each(Scanner.regExpAttributes, function (attrMatcher) {
+					if (attrMatcher.match.test(attr)) {
+						attrMatcher.callback(options, el);
+					}
+				});
+			}
+		});
+	};
+	Scanner.tag = function (tagName, callback) {
+		// if we have html5shive ... re-generate
+		if (window.html5) {
+			window.html5.elements += ' ' + tagName;
+			window.html5.shivDocument();
+		}
+
+		Scanner.tags[tagName.toLowerCase()] = callback;
+	};
+	Scanner.tags = {};
+	// This is called when there is a special tag
+	Scanner.hookupTag = function (hookupOptions) {
+		// we need to call any live hookups
+		// so get that and return the hook
+		// a better system will always be called with the same stuff
+		var hooks = can.view.getHooks();
+		return can.view.hook(function (el) {
+			can.each(hooks, function (fn) {
+				fn(el);
+			});
+
+			var tagName = hookupOptions.tagName,
+				helperTagCallback = hookupOptions.options.read('helpers._tags.' + tagName, {
+					isArgument: true,
+					proxyMethods: false
+				})
+					.value,
+				tagCallback = helperTagCallback || Scanner.tags[tagName];
+
+			// If this was an element like <foo-bar> that doesn't have a component, just render its content
+			var scope = hookupOptions.scope,
+				res = tagCallback ? tagCallback(el, hookupOptions) : scope;
+
+		
+
+			// If the tagCallback gave us something to render with, and there is content within that element
+			// render it!
+			if (res && hookupOptions.subtemplate) {
+
+				if (scope !== res) {
+					scope = scope.add(res);
+				}
+				var frag = can.view.frag(hookupOptions.subtemplate(scope, hookupOptions.options));
+				can.appendChild(el, frag);
+			}
+			can.view.Scanner.hookupAttributes(hookupOptions, el);
+		});
+	};
+	/**
+	 * Extend can.View to add scanner support.
+	 */
+	Scanner.prototype = {
+		// a default that can be overwritten
+		helpers: [],
+
+		scan: function (source, name) {
+			var tokens = [],
+				last = 0,
+				simple = this.tokenSimple,
+				complex = this.tokenComplex;
+			var cleanedTagName;
+			source = source.replace(newLine, '\n');
+			if (this.transform) {
+				source = this.transform(source);
+			}
+			source.replace(this.tokenReg, function (whole, part) {
+				// offset is the second to last argument
+				var offset = arguments[arguments.length - 2];
+
+				// if the next token starts after the last token ends
+				// push what's in between
+				if (offset > last) {
+					tokens.push(source.substring(last, offset));
+				}
+
+				// push the simple token (if there is one)
+				if (simple[whole]) {
+					tokens.push(whole);
+				}
+				// otherwise lookup complex tokens
+				else {
+					for (var i = 0, token; token = complex[i]; i++) {
+						if (token.re.test(whole)) {
+							tokens.push(token.abbr);
+							// Push a rescan function if one exists
+							if (token.rescan) {
+								tokens.push(token.rescan(part));
+							}
+							break;
+						}
+					}
+				}
+
+				// update the position of the last part of the last token
+				last = offset + part.length;
+			});
+
+			// if there's something at the end, add it
+			if (last < source.length) {
+				tokens.push(source.substr(last));
+			}
+
+			var content = '',
+				buff = [startTxt + (this.text.start || '')],
+				// Helper `function` for putting stuff in the view concat.
+				put = function (content, bonus) {
+					buff.push(put_cmd, '"', clean(content), '"' + (bonus || '') + ');');
+				},
+				// A stack used to keep track of how we should end a bracket
+				// `}`.
+				// Once we have a `<%= %>` with a `leftBracket`,
+				// we store how the file should end here (either `))` or `;`).
+				endStack = [],
+				// The last token, used to remember which tag we are in.
+				lastToken,
+				// The corresponding magic tag.
+				startTag = null,
+				// Was there a magic tag inside an html tag?
+				magicInTag = false,
+				// was there a special state
+				specialStates = {
+					attributeHookups: [],
+					// a stack of tagHookups
+					tagHookups: [],
+					//last tag hooked up
+					lastTagHookup: ''
+				},
+				// Helper `function` for removing tagHookups from the hookup stack
+				popTagHookup = function() {
+					// The length of tagHookups is the nested depth which can be used to uniquely identify custom tags of the same type
+					specialStates.lastTagHookup = specialStates.tagHookups.pop() + specialStates.tagHookups.length;
+				},
+				// The current tag name.
+				tagName = '',
+				// stack of tagNames
+				tagNames = [],
+				// Pop from tagNames?
+				popTagName = false,
+				// Declared here.
+				bracketCount,
+				// in a special attr like src= or style=
+				specialAttribute = false,
+
+				i = 0,
+				token,
+				tmap = this.tokenMap,
+				attrName;
+
+			// Reinitialize the tag state goodness.
+			htmlTag = quote = beforeQuote = null;
+			for (;
+				(token = tokens[i++]) !== undefined;) {
+				if (startTag === null) {
+					switch (token) {
+					case tmap.left:
+					case tmap.escapeLeft:
+					case tmap.returnLeft:
+						magicInTag = htmlTag && 1;
+						/* falls through */
+					case tmap.commentLeft:
+						// A new line -- just add whatever content within a clean.
+						// Reset everything.
+						startTag = token;
+						if (content.length) {
+							put(content);
+						}
+						content = '';
+						break;
+					case tmap.escapeFull:
+						// This is a full line escape (a line that contains only whitespace and escaped logic)
+						// Break it up into escape left and right
+						magicInTag = htmlTag && 1;
+						rescan = 1;
+						startTag = tmap.escapeLeft;
+						if (content.length) {
+							put(content);
+						}
+						rescan = tokens[i++];
+						content = rescan.content || rescan;
+						if (rescan.before) {
+							put(rescan.before);
+						}
+						tokens.splice(i, 0, tmap.right);
+						break;
+					case tmap.commentFull:
+						// Ignore full line comments.
+						break;
+					case tmap.templateLeft:
+						content += tmap.left;
+						break;
+					case '<':
+						// Make sure we are not in a comment.
+						if (tokens[i].indexOf('!--') !== 0) {
+							htmlTag = 1;
+							magicInTag = 0;
+						}
+
+						content += token;
+
+						break;
+					case '>':
+						htmlTag = 0;
+						// content.substr(-1) doesn't work in IE7/8
+						var emptyElement = content.substr(content.length - 1) === '/' || content.substr(content.length - 2) === '--',
+							attrs = '';
+						// if there was a magic tag
+						// or it's an element that has text content between its tags,
+						// but content is not other tags add a hookup
+						// TODO: we should only add `can.EJS.pending()` if there's a magic tag
+						// within the html tags.
+						if (specialStates.attributeHookups.length) {
+							attrs = "attrs: ['" + specialStates.attributeHookups.join("','") + "'], ";
+							specialStates.attributeHookups = [];
+						}
+						// this is the > of a special tag
+						// comparison to lastTagHookup makes sure the same custom tags can be nested
+						if ((tagName + specialStates.tagHookups.length) !== specialStates.lastTagHookup && tagName === top(specialStates.tagHookups)) {
+							// If it's a self closing tag (like <content/>) make sure we put the / at the end.
+							if (emptyElement) {
+								content = content.substr(0, content.length - 1);
+							}
+							// Put the start of the end
+							buff.push(put_cmd,
+								'"', clean(content), '"',
+								",can.view.Scanner.hookupTag({tagName:'" + tagName + "'," + (attrs) + "scope: " + (this.text.scope || "this") + this.text.options);
+
+							// if it's a self closing tag (like <content/>) close and end the tag
+							if (emptyElement) {
+								buff.push("}));");
+								content = "/>";
+								popTagHookup();
+							}
+							// if it's an empty tag
+							else if (tokens[i] === "<" && tokens[i + 1] === "/" + tagName) {
+								buff.push("}));");
+								content = token;
+								popTagHookup();
+							} else {
+								// it has content
+								buff.push(",subtemplate: function(" + this.text.argNames + "){\n" + startTxt + (this.text.start || ''));
+								content = '';
+							}
+						} else if (magicInTag || !popTagName && elements.tagToContentPropMap[tagNames[tagNames.length - 1]] || attrs) {
+							// make sure / of /> is on the right of pending
+							var pendingPart = ",can.view.pending({" + attrs + "scope: " + (this.text.scope || "this") + this.text.options + "}),\"";
+							if (emptyElement) {
+								put(content.substr(0, content.length - 1), pendingPart + "/>\"");
+							} else {
+								put(content, pendingPart + ">\"");
+							}
+							content = '';
+							magicInTag = 0;
+						} else {
+							content += token;
+						}
+
+						// if it's a tag like <input/>
+						if (emptyElement || popTagName) {
+							// remove the current tag in the stack
+							tagNames.pop();
+							// set the current tag to the previous parent
+							tagName = tagNames[tagNames.length - 1];
+							// Don't pop next time
+							popTagName = false;
+						}
+						specialStates.attributeHookups = [];
+						break;
+					case "'":
+					case '"':
+						// If we are in an html tag, finding matching quotes.
+						if (htmlTag) {
+							// We have a quote and it matches.
+							if (quote && quote === token) {
+								// We are exiting the quote.
+								quote = null;
+								// Otherwise we are creating a quote.
+								// TODO: does this handle `\`?
+								var attr = getAttrName();
+								if (Scanner.attributes[attr]) {
+									specialStates.attributeHookups.push(attr);
+								} else {
+									can.each(Scanner.regExpAttributes, function (attrMatcher) {
+										if (attrMatcher.match.test(attr)) {
+											specialStates.attributeHookups.push(attr);
+										}
+									});
+								}
+
+								if (specialAttribute) {
+
+									content += token;
+									put(content);
+									buff.push(finishTxt, "}));\n");
+									content = "";
+									specialAttribute = false;
+
+									break;
+								}
+
+							} else if (quote === null) {
+								quote = token;
+								beforeQuote = lastToken;
+								attrName = getAttrName();
+								// TODO: check if there's magic!!!!
+								if (tagName === 'img' && attrName === 'src' || attrName === 'style') {
+									// put content that was before the attr name, but don't include the src=
+									put(content.replace(attrReg, ""));
+									content = '';
+									specialAttribute = true;
+
+									buff.push(insert_cmd, "can.view.txt(2,'" + getTag(tagName, tokens, i) + "'," + status() + ",this,function(){", startTxt);
+									put(attrName + "=" + token);
+									break;
+								}
+
+							}
+						}
+						//default is meant to run on all cases
+						/*falls through*/
+					default:
+						// Track the current tag
+						if (lastToken === '<') {
+
+							tagName = token.substr(0, 3) === "!--" ?
+								"!--" : token.split(/\s/)[0];
+
+							var isClosingTag = false;
+
+							if (tagName.indexOf("/") === 0) {
+								isClosingTag = true;
+								cleanedTagName = tagName.substr(1);
+							}
+
+							if (isClosingTag) { // </tag>
+
+								// when we enter a new tag, pop the tag name stack
+								if (top(tagNames) === cleanedTagName) {
+									// set tagName to the last tagName
+									// if there are no more tagNames, we'll rely on getTag.
+									tagName = cleanedTagName;
+									popTagName = true;
+								}
+								// if we are in a closing tag of a custom tag
+								if (top(specialStates.tagHookups) === cleanedTagName) {
+									// remove the last < from the content
+									put(content.substr(0, content.length - 1));
+
+									// finish the "section"
+									buff.push(finishTxt + "}}) );");
+									// the < belongs to the outside
+									content = "><";
+									popTagHookup();
+								}
+
+							} else {
+								if (tagName.lastIndexOf('/') === tagName.length - 1) {
+									tagName = tagName.substr(0, tagName.length - 1);
+
+								}
+
+								if (tagName !== "!--" && (Scanner.tags[tagName] || automaticCustomElementCharacters.test(tagName))) {
+									// if the content tag is inside something it doesn't belong ...
+									if (tagName === 'content' && elements.tagMap[top(tagNames)]) {
+										// convert it to an element that will work
+										token = token.replace('content', elements.tagMap[top(tagNames)]);
+									}
+									// we will hookup at the ending tag>
+									specialStates.tagHookups.push(tagName);
+								}
+
+								tagNames.push(tagName);
+
+							}
+
+						}
+						content += token;
+						break;
+					}
+				} else {
+					// We have a start tag.
+					switch (token) {
+					case tmap.right:
+					case tmap.returnRight:
+						switch (startTag) {
+						case tmap.left:
+							// Get the number of `{ minus }`
+							bracketCount = bracketNum(content);
+
+							// We are ending a block.
+							if (bracketCount === 1) {
+								// We are starting on.
+								buff.push(insert_cmd, 'can.view.txt(0,\'' + getTag(tagName, tokens, i) + '\',' + status() + ',this,function(){', startTxt, content);
+								endStack.push({
+									before: '',
+									after: finishTxt + '}));\n'
+								});
+							} else {
+
+								// How are we ending this statement?
+								last = endStack.length && bracketCount === -1 ? endStack.pop() : {
+									after: ';'
+								};
+
+								// If we are ending a returning block,
+								// add the finish text which returns the result of the
+								// block.
+								if (last.before) {
+									buff.push(last.before);
+								}
+								// Add the remaining content.
+								buff.push(content, ';', last.after);
+							}
+							break;
+						case tmap.escapeLeft:
+						case tmap.returnLeft:
+							// We have an extra `{` -> `block`.
+							// Get the number of `{ minus }`.
+							bracketCount = bracketNum(content);
+							// If we have more `{`, it means there is a block.
+							if (bracketCount) {
+								// When we return to the same # of `{` vs `}` end with a `doubleParent`.
+								endStack.push({
+									before: finishTxt,
+									after: '}));\n'
+								});
+							}
+
+							var escaped = startTag === tmap.escapeLeft ? 1 : 0,
+								commands = {
+									insert: insert_cmd,
+									tagName: getTag(tagName, tokens, i),
+									status: status(),
+									specialAttribute: specialAttribute
+								};
+
+							for (var ii = 0; ii < this.helpers.length; ii++) {
+								// Match the helper based on helper
+								// regex name value
+								var helper = this.helpers[ii];
+								if (helper.name.test(content)) {
+									content = helper.fn(content, commands);
+
+									// dont escape partials
+									if (helper.name.source === /^>[\s]*\w*/.source) {
+										escaped = 0;
+									}
+									break;
+								}
+							}
+
+							// Handle special cases
+							if (typeof content === 'object') {
+								if (content.raw) {
+									buff.push(content.raw);
+								}
+							} else if (specialAttribute) {
+								buff.push(insert_cmd, content, ');');
+							} else {
+								// If we have `<%== a(function(){ %>` then we want
+								// `can.EJS.text(0,this, function(){ return a(function(){ var _v1ew = [];`.
+								buff.push(insert_cmd, "can.view.txt(\n" +
+									(typeof status() === "string" || escaped) + ",\n'" +
+									tagName + "',\n" +
+									status() + ",\n" +
+									"this,\nfunction(){ " +
+									(this.text.escape || '') +
+									"return ", content,
+									// If we have a block.
+									bracketCount ?
+									// Start with startTxt `"var _v1ew = [];"`.
+									startTxt :
+									// If not, add `doubleParent` to close push and text.
+									"}));\n");
+							}
+
+							if (rescan && rescan.after && rescan.after.length) {
+								put(rescan.after.length);
+								rescan = null;
+							}
+							break;
+						}
+						startTag = null;
+						content = '';
+						break;
+					case tmap.templateLeft:
+						content += tmap.left;
+						break;
+					default:
+						content += token;
+						break;
+					}
+				}
+				lastToken = token;
+			}
+
+			// Put it together...
+			if (content.length) {
+				// Should be `content.dump` in Ruby.
+				put(content);
+			}
+			buff.push(';');
+			var template = buff.join(''),
+				out = {
+					out: (this.text.outStart || '') + template + ' ' + finishTxt + (this.text.outEnd || '')
+				};
+			// Use `eval` instead of creating a function, because it is easier to debug.
+			myEval.call(out, 'this.fn = (function(' + this.text.argNames + '){' + out.out + '});\r\n//# sourceURL=' + name + '.js');
+			return out;
+		}
+	};
+	can.view.Scanner.tag('content', function (el, options) {
+		return options.scope;
+	});
+
+	return Scanner;
+});
+/*!
+ * CanJS - 2.0.7
+ * http://canjs.us/
+ * Copyright (c) 2014 Bitovi
+ * Wed, 26 Mar 2014 16:12:27 GMT
+ * Licensed MIT
+ * Includes: CanJS default build
+ * Download from: http://canjs.us/
+ */
+define('can/view/node_lists',["can/util/library", "can/view/elements"], function (can) {
+	// In some browsers, text nodes can not take expando properties.
+	// We test that here.
+	var canExpando = true;
+	try {
+		document.createTextNode('')
+			._ = 0;
+	} catch (ex) {
+		canExpando = false;
+	}
+	// A mapping of element ids to nodeList id
+	var nodeMap = {},
+		// A mapping of ids to text nodes
+		textNodeMap = {}, expando = 'ejs_' + Math.random(),
+		_id = 0,
+		id = function (node) {
+			if (canExpando || node.nodeType !== 3) {
+				if (node[expando]) {
+					return node[expando];
+				} else {
+					++_id;
+					return node[expando] = (node.nodeName ? 'element_' : 'obj_') + _id;
+				}
+			} else {
+				for (var textNodeID in textNodeMap) {
+					if (textNodeMap[textNodeID] === node) {
+						return textNodeID;
+					}
+				}
+				++_id;
+				textNodeMap['text_' + _id] = node;
+				return 'text_' + _id;
+			}
+		}, splice = [].splice;
+	/**
+	 * @property {Object} can.view.nodeLists
+	 * @parent can.view.static
+	 *
+	 * Stores hierarchical node references.
+	 *
+	 * ## Use
+	 *
+	 * `can.view.nodeLists` is used to make sure "directly nested" live-binding
+	 * sections update content correctly.
+	 *
+	 * Consider a template like:
+	 *
+	 *     <div>
+	 *     {{#if items.length}}
+	 *        Items:
+	 *        {{#items}}
+	 *           <label></label>
+	 *        {{/items}}
+	 *     {{/if}}
+	 *     </div>
+	 *
+	 *
+	 * The `{{#if}}` and `{{#items}}` seconds are "directly nested" because
+	 * they share the same `<div>` parent element.
+	 *
+	 * If `{{#items}}` changes the DOM by adding more `<labels>`,
+	 * `{{#if}}` needs to know about the `<labels>` to remove them
+	 * if `{{#if}}` is re-rendered.  `{{#if}}` would be re-rendered, for example, if
+	 * all items were removed.
+	 *
+	 *
+	 * To keep all live-bound sections knowing which elements they are managing,
+	 * all live-bound elments are [can.view.nodeLists.register registered] and
+	 * [can.view.nodeLists.update updated] when the change.
+	 *
+	 * For example, the above template, when rendered with data like:
+	 *
+	 *     data = new can.Map({
+	 *       items: ["first","second"]
+	 *     })
+	 *
+	 * This will first render the following content:
+	 *
+	 *     <div>
+	 *        <span data-view-id='5'/>
+	 *     </div>
+	 *
+	 * When the `5` [can.view.hookup hookup] callback is called, this will register the `<span>` like:
+	 *
+	 *     var ifsNodes = [<span 5>]
+	 *     nodeLists.register(ifsNodes);
+	 *
+	 * And then render `{{if}}`'s contents and update `ifsNodes` with it:
+	 *
+	 *     nodeLists.update( ifsNodes, [<"\nItems:\n">, <span data-view-id="6">] );
+	 *
+	 * Next, hookup `6` is called which will regsiter the `<span>` like:
+	 *
+	 *     var eachsNodes = [<span 6>];
+	 *     nodeLists.register(eachsNodes);
+	 *
+	 * And then it will render `{{#each}}`'s content and update `eachsNodes` with it:
+	 *
+	 *     nodeLists.update(eachsNodes, [<label>,<label>]);
+	 *
+	 * As `nodeLists` knows that `eachsNodes` is inside `ifsNodes`, it also updates
+	 * `ifsNodes`'s nodes to look like:
+	 *
+	 *     [<"\nItems:\n">,<label>,<label>]
+	 *
+	 * Now, if all items were removed, `{{#if}}` would be able to remove
+	 * all the `<label>` elements.
+	 *
+	 * When you regsiter a nodeList, you can also provide a callback to know when
+	 * that nodeList has been replaced by a parent nodeList.  This is
+	 * useful for tearing down live-binding.
+	 *
+	 *
+	 *
+	 *
+	 *
+	 */
+	var nodeLists = {
+		id: id,
+
+		/**
+		 * @function can.view.nodeLists.update
+		 * @parent can.view.nodeLists
+		 *
+		 * Updates a nodeList with new items
+		 *
+		 * @param {Array.<HTMLElement>} nodeList A registered nodeList.
+		 *
+		 * @param {Array.<HTMLElement>} newNodes HTML nodes that should be placed in the nodeList.
+		 *
+		 */
+		update: function (nodeList, newNodes) {
+			// Unregister all childNodes.
+			can.each(nodeList.childNodeLists, function (nodeList) {
+				nodeLists.unregister(nodeList);
+			});
+			nodeList.childNodeLists = [];
+			// Remove old node pointers to this list.
+			can.each(nodeList, function (node) {
+				delete nodeMap[id(node)];
+			});
+			newNodes = can.makeArray(newNodes);
+			// indicate the new nodes belong to this list
+			can.each(newNodes, function (node) {
+				nodeMap[id(node)] = nodeList;
+			});
+			var oldListLength = nodeList.length,
+				firstNode = nodeList[0];
+			// Replace oldNodeLists's contents'
+			splice.apply(nodeList, [
+				0,
+				oldListLength
+			].concat(newNodes));
+			// update all parent nodes so they are able to replace the correct elements
+			var parentNodeList = nodeList;
+			while (parentNodeList = parentNodeList.parentNodeList) {
+				splice.apply(parentNodeList, [
+					can.inArray(firstNode, parentNodeList),
+					oldListLength
+				].concat(newNodes));
+			}
+		},
+		/**
+		 * @function can.view.nodeLists.register
+		 * @parent can.view.nodeLists
+		 *
+		 * Registers a nodeList.
+		 *
+		 * @param {Array.<HTMLElement>} nodeList An array of elements. This array will be kept live if child nodeLists
+		 * update themselves.
+		 *
+		 * @param {function} [unregistered] An optional callback that is called when the `nodeList` is
+		 * replaced due to a parentNode list being updated.
+		 *
+		 * @param {Array.<HTMLElement>} [parent] An optional parent nodeList.  If no parentNode list is found,
+		 * the first element in `nodeList`'s current nodeList will be used.
+		 *
+		 * @return {Array.<HTMLElement>} The `nodeList` passed to `register`.
+		 */
+		register: function (nodeList, unregistered, parent) {
+			// add an id to the nodeList
+			nodeList.unregistered = unregistered;
+			nodeList.childNodeLists = [];
+			if (!parent) {
+				// find the parent by looking up where this node is
+				if (nodeList.length > 1) {
+					throw 'does not work';
+				}
+				var nodeId = id(nodeList[0]);
+				parent = nodeMap[nodeId];
+			}
+			nodeList.parentNodeList = parent;
+			if (parent) {
+				parent.childNodeLists.push(nodeList);
+			}
+			return nodeList;
+		},
+		// removes node in all parent nodes and unregisters all childNodes
+		/**
+		 * @function can.view.nodeLists.unregister
+		 * @parent can.view.nodeLists
+		 *
+		 * Unregister's a nodeList.  Call if the nodeList is no longer being
+		 * updated.  This will unregister all child nodeLists.
+		 *
+		 *
+		 * @param {Array.<HTMLElement>} nodeList The nodelist to unregister.
+		 */
+		unregister: function (nodeList) {
+			if (!nodeList.isUnregistered) {
+				nodeList.isUnregistered = true;
+				// unregister all childNodeLists
+				delete nodeList.parentNodeList;
+				can.each(nodeList, function (node) {
+					var nodeId = id(node);
+					delete nodeMap[nodeId];
+				});
+				// this can unbind which will call itself
+				if (nodeList.unregistered) {
+					nodeList.unregistered();
+				}
+				can.each(nodeList.childNodeLists, function (nodeList) {
+					nodeLists.unregister(nodeList);
+				});
+			}
+		},
+		nodeMap: nodeMap
+	};
+	return nodeLists;
+});
+/*!
+ * CanJS - 2.0.7
+ * http://canjs.us/
+ * Copyright (c) 2014 Bitovi
+ * Wed, 26 Mar 2014 16:12:27 GMT
+ * Licensed MIT
+ * Includes: CanJS default build
+ * Download from: http://canjs.us/
+ */
+define('can/view/live',["can/util/library", "can/view/elements", "can/view", "can/view/node_lists"], function (can, elements, view, nodeLists) {
+	// ## live.js
+	//
+	// The live module provides live binding for computes
+	// and can.List.
+	//
+	// Currently, it's API is designed for `can/view/render`, but
+	// it could easily be used for other purposes.
+	// ### Helper methods
+	//
+	// #### setup
+	//
+	// `setup(HTMLElement, bind(data), unbind(data)) -> data`
+	//
+	// Calls bind right away, but will call unbind
+	// if the element is "destroyed" (removed from the DOM).
+	var setup = function (el, bind, unbind) {
+		// Removing an element can call teardown which
+		// unregister the nodeList which calls teardown
+		var tornDown = false,
+			teardown = function () {
+				if (!tornDown) {
+					tornDown = true;
+					unbind(data);
+					can.unbind.call(el, 'removed', teardown);
+				}
+				return true;
+			}, data = {
+				teardownCheck: function (parent) {
+					return parent ? false : teardown();
+				}
+			};
+		can.bind.call(el, 'removed', teardown);
+		bind(data);
+		return data;
+	},
+		// #### listen
+		// Calls setup, but presets bind and unbind to
+		// operate on a compute
+		listen = function (el, compute, change) {
+			return setup(el, function () {
+				compute.bind('change', change);
+			}, function (data) {
+				compute.unbind('change', change);
+				if (data.nodeList) {
+					nodeLists.unregister(data.nodeList);
+				}
+			});
+		},
+		// #### getAttributeParts
+		// Breaks up a string like foo='bar' into ["foo","'bar'""]
+		getAttributeParts = function (newVal) {
+			return (newVal || '')
+				.replace(/['"]/g, '')
+				.split('=');
+		}, splice = [].splice;
+	/**
+	 * @property {Object} can.view.live
+	 * @parent can.view.static
+	 *
+	 * Setup live-binding to a compute manually.
+	 *
+	 * @body
+	 *
+	 * ## Use
+	 *
+	 * `can.view.live` is an object with utlitiy methods for setting up
+	 * live-binding.  For example, to make an `<h2>`
+	 *
+	 *
+	 *
+	 */
+	var live = {
+		list: function (el, compute, render, context, parentNode) {
+			// A nodeList of all elements this live-list manages.
+			// This is here so that if this live list is within another section
+			// that section is able to remove the items in this list.
+			var masterNodeList = [el],
+				// A mapping of the index of an item to an array
+				// of elements that represent the item.
+				// Each array is registered so child or parent
+				// live structures can update the elements.
+				itemIndexToNodeListsMap = [],
+				// A mapping of items to their indicies'
+				indexMap = [],
+				// Called when items are added to the list.
+				add = function (ev, items, index) {
+					// Collect new html and mappings
+					var frag = document.createDocumentFragment(),
+						newNodeLists = [],
+						newIndicies = [];
+					// For each new item,
+					can.each(items, function (item, key) {
+						var itemIndex = can.compute(key + index),
+							// get its string content
+							itemHTML = render.call(context, item, itemIndex),
+							// and convert it into elements.
+							itemFrag = can.view.fragment(itemHTML);
+						// Add those elements to the mappings.
+						newNodeLists.push(nodeLists.register(can.makeArray(itemFrag.childNodes), undefined, masterNodeList));
+						// Hookup the fragment (which sets up child live-bindings) and
+						// add it to the collection of all added elements.
+						frag.appendChild(can.view.hookup(itemFrag));
+						newIndicies.push(itemIndex);
+					});
+					// Check if we are adding items at the end
+					if (!itemIndexToNodeListsMap[index]) {
+						elements.after(index === 0 ? [text] : itemIndexToNodeListsMap[index - 1], frag);
+					} else {
+						// Add elements before the next index's first element.
+						var el = itemIndexToNodeListsMap[index][0];
+						can.insertBefore(el.parentNode, frag, el);
+					}
+					splice.apply(itemIndexToNodeListsMap, [
+						index,
+						0
+					].concat(newNodeLists));
+					// update indices after insert point
+					splice.apply(indexMap, [
+						index,
+						0
+					].concat(newIndicies));
+					for (var i = index + newIndicies.length, len = indexMap.length; i < len; i++) {
+						indexMap[i](i);
+					}
+				},
+				// Called when items are removed or when the bindings are torn down.
+				remove = function (ev, items, index, duringTeardown) {
+					// If this is because an element was removed, we should
+					// check to make sure the live elements are still in the page.
+					// If we did this during a teardown, it would cause an infinite loop.
+					if (!duringTeardown && data.teardownCheck(text.parentNode)) {
+						return;
+					}
+					var removedMappings = itemIndexToNodeListsMap.splice(index, items.length),
+						itemsToRemove = [];
+					can.each(removedMappings, function (nodeList) {
+						// add items that we will remove all at once
+						[].push.apply(itemsToRemove, nodeList);
+						// Update any parent lists to remove these items
+						nodeLists.update(nodeList, []);
+						// unregister the list
+						nodeLists.unregister(nodeList);
+					});
+					// update indices after remove point
+					indexMap.splice(index, items.length);
+					for (var i = index, len = indexMap.length; i < len; i++) {
+						indexMap[i](i);
+					}
+					can.remove(can.$(itemsToRemove));
+				}, text = document.createTextNode(''),
+				// The current list.
+				list,
+				// Called when the list is replaced with a new list or the binding is torn-down.
+				teardownList = function () {
+					// there might be no list right away, and the list might be a plain
+					// array
+					if (list && list.unbind) {
+						list.unbind('add', add)
+							.unbind('remove', remove);
+					}
+					// use remove to clean stuff up for us
+					remove({}, {
+						length: itemIndexToNodeListsMap.length
+					}, 0, true);
+				},
+				// Called when the list is replaced or setup.
+				updateList = function (ev, newList, oldList) {
+					teardownList();
+					// make an empty list if the compute returns null or undefined
+					list = newList || [];
+					// list might be a plain array
+					if (list.bind) {
+						list.bind('add', add)
+							.bind('remove', remove);
+					}
+					add({}, list, 0);
+				};
+			parentNode = elements.getParentNode(el, parentNode);
+			// Setup binding and teardown to add and remove events
+			var data = setup(parentNode, function () {
+				if (can.isFunction(compute)) {
+					compute.bind('change', updateList);
+				}
+			}, function () {
+				if (can.isFunction(compute)) {
+					compute.unbind('change', updateList);
+				}
+				teardownList();
+			});
+			live.replace(masterNodeList, text, data.teardownCheck);
+			// run the list setup
+			updateList({}, can.isFunction(compute) ? compute() : compute);
+		},
+		html: function (el, compute, parentNode) {
+			var data;
+			parentNode = elements.getParentNode(el, parentNode);
+			data = listen(parentNode, compute, function (ev, newVal, oldVal) {
+				// TODO: remove teardownCheck in 2.1
+				var attached = nodes[0].parentNode;
+				// update the nodes in the DOM with the new rendered value
+				if (attached) {
+					makeAndPut(newVal);
+				}
+				data.teardownCheck(nodes[0].parentNode);
+			});
+			var nodes = [el],
+				makeAndPut = function (val) {
+					var frag = can.view.fragment('' + val),
+						oldNodes = can.makeArray(nodes);
+					// We need to mark each node as belonging to the node list.
+					nodeLists.update(nodes, frag.childNodes);
+					frag = can.view.hookup(frag, parentNode);
+					elements.replace(oldNodes, frag);
+				};
+			data.nodeList = nodes;
+			// register the span so nodeLists knows the parentNodeList
+			nodeLists.register(nodes, data.teardownCheck);
+			makeAndPut(compute());
+		},
+		replace: function (nodes, val, teardown) {
+			var oldNodes = nodes.slice(0),
+				frag;
+			nodeLists.register(nodes, teardown);
+			if (typeof val === 'string') {
+				frag = can.view.fragment(val);
+			} else if (val.nodeType !== 11) {
+				frag = document.createDocumentFragment();
+				frag.appendChild(val);
+			} else {
+				frag = val;
+			}
+			// We need to mark each node as belonging to the node list.
+			nodeLists.update(nodes, frag.childNodes);
+			if (typeof val === 'string') {
+				// if it was a string, check for hookups
+				frag = can.view.hookup(frag, nodes[0].parentNode);
+			}
+			elements.replace(oldNodes, frag);
+			return nodes;
+		},
+		text: function (el, compute, parentNode) {
+			var parent = elements.getParentNode(el, parentNode);
+			// setup listening right away so we don't have to re-calculate value
+			var data = listen(parent, compute, function (ev, newVal, oldVal) {
+				// Sometimes this is 'unknown' in IE and will throw an exception if it is
+				/* jshint ignore:start */
+				if (typeof node.nodeValue !== 'unknown') {
+					node.nodeValue = '' + newVal;
+				}
+				/* jshint ignore:end */
+				// TODO: remove in 2.1
+				data.teardownCheck(node.parentNode);
+			}),
+				// The text node that will be updated
+				node = document.createTextNode(compute());
+			// Replace the placeholder with the live node and do the nodeLists thing.
+			// Add that node to nodeList so we can remove it when the parent element is removed from the page
+			data.nodeList = live.replace([el], node, data.teardownCheck);
+		},
+		/**
+		 * @function can.view.live.text
+		 * @parent can.view.live
+		 *
+		 * Replaces one element with some content while keeping [can.view.live.nodeLists nodeLists] data
+		 * correct.
+		 */
+		attributes: function (el, compute, currentValue) {
+			var setAttrs = function (newVal) {
+				var parts = getAttributeParts(newVal),
+					newAttrName = parts.shift();
+				// Remove if we have a change and used to have an `attrName`.
+				if (newAttrName !== attrName && attrName) {
+					elements.removeAttr(el, attrName);
+				}
+				// Set if we have a new `attrName`.
+				if (newAttrName) {
+					elements.setAttr(el, newAttrName, parts.join('='));
+					attrName = newAttrName;
+				}
+			};
+			listen(el, compute, function (ev, newVal) {
+				setAttrs(newVal);
+			});
+			// current value has been set
+			if (arguments.length >= 3) {
+				var attrName = getAttributeParts(currentValue)[0];
+			} else {
+				setAttrs(compute());
+			}
+		},
+		attributePlaceholder: '__!!__',
+		attributeReplace: /__!!__/g,
+		attribute: function (el, attributeName, compute) {
+			listen(el, compute, function (ev, newVal) {
+				elements.setAttr(el, attributeName, hook.render());
+			});
+			var wrapped = can.$(el),
+				hooks;
+			// Get the list of hookups or create one for this element.
+			// Hooks is a map of attribute names to hookup `data`s.
+			// Each hookup data has:
+			// `render` - A `function` to render the value of the attribute.
+			// `funcs` - A list of hookup `function`s on that attribute.
+			// `batchNum` - The last event `batchNum`, used for performance.
+			hooks = can.data(wrapped, 'hooks');
+			if (!hooks) {
+				can.data(wrapped, 'hooks', hooks = {});
+			}
+			// Get the attribute value.
+			var attr = elements.getAttr(el, attributeName),
+				// Split the attribute value by the template.
+				// Only split out the first __!!__ so if we have multiple hookups in the same attribute,
+				// they will be put in the right spot on first render
+				parts = attr.split(live.attributePlaceholder),
+				goodParts = [],
+				hook;
+			goodParts.push(parts.shift(), parts.join(live.attributePlaceholder));
+			// If we already had a hookup for this attribute...
+			if (hooks[attributeName]) {
+				// Just add to that attribute's list of `function`s.
+				hooks[attributeName].computes.push(compute);
+			} else {
+				// Create the hookup data.
+				hooks[attributeName] = {
+					render: function () {
+						var i = 0,
+							// attr doesn't have a value in IE
+							newAttr = attr ? attr.replace(live.attributeReplace, function () {
+								return elements.contentText(hook.computes[i++]());
+							}) : elements.contentText(hook.computes[i++]());
+						return newAttr;
+					},
+					computes: [compute],
+					batchNum: undefined
+				};
+			}
+			// Save the hook for slightly faster performance.
+			hook = hooks[attributeName];
+			// Insert the value in parts.
+			goodParts.splice(1, 0, compute());
+			// Set the attribute.
+			elements.setAttr(el, attributeName, goodParts.join(''));
+		},
+		specialAttribute: function (el, attributeName, compute) {
+			listen(el, compute, function (ev, newVal) {
+				elements.setAttr(el, attributeName, getValue(newVal));
+			});
+			elements.setAttr(el, attributeName, getValue(compute()));
+		}
+	};
+	var newLine = /(\r|\n)+/g;
+	var getValue = function (val) {
+		var regexp = /^["'].*["']$/;
+		val = val.replace(elements.attrReg, '')
+			.replace(newLine, '');
+		// check if starts and ends with " or '
+		return regexp.test(val) ? val.substr(1, val.length - 2) : val;
+	};
+	can.view.live = live;
+	can.view.nodeLists = nodeLists;
+	can.view.elements = elements;
+	return live;
+});
+/*!
+ * CanJS - 2.0.7
+ * http://canjs.us/
+ * Copyright (c) 2014 Bitovi
+ * Wed, 26 Mar 2014 16:12:27 GMT
+ * Licensed MIT
+ * Includes: CanJS default build
+ * Download from: http://canjs.us/
+ */
+define('can/view/render',["can/view", "can/view/elements", "can/view/live", "can/util/string"], function (can, elements, live) {
+
+	/**
+	 * Helper(s)
+	 */
+	var pendingHookups = [],
+		tagChildren = function (tagName) {
+			var newTag = elements.tagMap[tagName] || "span";
+			if (newTag === "span") {
+				//innerHTML in IE doesn't honor leading whitespace after empty elements
+				return "@@!!@@";
+			}
+			return "<" + newTag + ">" + tagChildren(newTag) + "</" + newTag + ">";
+		},
+		contentText = function (input, tag) {
+
+			// If it's a string, return.
+			if (typeof input === 'string') {
+				return input;
+			}
+			// If has no value, return an empty string.
+			if (!input && input !== 0) {
+				return '';
+			}
+
+			// If it's an object, and it has a hookup method.
+			var hook = (input.hookup &&
+
+				// Make a function call the hookup method.
+				function (el, id) {
+					input.hookup.call(input, el, id);
+				}) ||
+
+			// Or if it's a `function`, just use the input.
+			(typeof input === 'function' && input);
+
+			// Finally, if there is a `function` to hookup on some dom,
+			// add it to pending hookups.
+			if (hook) {
+				if (tag) {
+					return "<" + tag + " " + can.view.hook(hook) + "></" + tag + ">";
+				} else {
+					pendingHookups.push(hook);
+				}
+
+				return '';
+			}
+
+			// Finally, if all else is `false`, `toString()` it.
+			return '' + input;
+		},
+		// Returns escaped/sanatized content for anything other than a live-binding
+		contentEscape = function (txt, tag) {
+			return (typeof txt === 'string' || typeof txt === 'number') ?
+				can.esc(txt) :
+				contentText(txt, tag);
+		},
+		// A flag to indicate if .txt was called within a live section within an element like the {{name}}
+		// within `<div {{#person}}{{name}}{{/person}}/>`.
+		withinTemplatedSectionWithinAnElement = false,
+		emptyHandler = function () {};
+
+	var lastHookups;
+
+	can.extend(can.view, {
+		live: live,
+		// called in text to make a temporary 
+		// can.view.lists function that can be called with
+		// the list to iterate over and the template
+		// used to produce the content within the list
+		setupLists: function () {
+
+			var old = can.view.lists,
+				data;
+
+			can.view.lists = function (list, renderer) {
+				data = {
+					list: list,
+					renderer: renderer
+				};
+				return Math.random();
+			};
+			// sets back to the old data
+			return function () {
+				can.view.lists = old;
+				return data;
+			};
+		},
+		pending: function (data) {
+			// TODO, make this only run for the right tagName
+			var hooks = can.view.getHooks();
+			return can.view.hook(function (el) {
+				can.each(hooks, function (fn) {
+					fn(el);
+				});
+				can.view.Scanner.hookupAttributes(data, el);
+			});
+		},
+		getHooks: function () {
+			var hooks = pendingHookups.slice(0);
+			lastHookups = hooks;
+			pendingHookups = [];
+			return hooks;
+		},
+		onlytxt: function (self, func) {
+			return contentEscape(func.call(self));
+		},
+		/**
+		 * @function can.view.txt
+		 * @hide
+		 *
+		 * A helper function used to insert the
+		 * value of the contents of a magic tag into
+		 * a template's output. It detects if an observable value is
+		 * read and will setup live binding.
+		 *
+		 * @signature `can.view.txt(escape, tagName, status, self, func)`
+		 *
+		 * @param {Number} 1 if the content returned should be escaped, 0 if otherwise.
+		 * @param {String} tagName the name of the tag the magic tag is most immediately
+		 * within. Ex: `"li"`.
+		 * @param {String|Number} status A flag indicates which part of a tag the
+		 * magic tag is within. Status can be:
+		 *
+		 *  - _STRING_ - The name of the attribute the magic tag is within. Ex: `"class"`
+		 *  - `1` - The magic tag is within a tag like `<div <%= %>>`
+		 *  - `0` - The magic tag is outside (or between) tags like `<div><%= %></div>`
+		 *
+		 * @param {*} self The `this` of the current context template. `func` is called with
+		 * self as this.
+		 *
+		 * @param {function} func The "wrapping" function. For
+		 * example:  `<%= task.attr('name') %>` becomes
+		 *   `(function(){return task.attr('name')})
+		 *
+		 */
+		txt: function (escape, tagName, status, self, func) {
+			// the temporary tag needed for any live setup
+			var tag = (elements.tagMap[tagName] || "span"),
+				// should live-binding be setup
+				setupLiveBinding = false,
+				// the compute's value
+				compute, value, unbind, listData, attributeName;
+
+			// Are we currently within a live section within an element like the {{name}}
+			// within `<div {{#person}}{{name}}{{/person}}/>`.
+			if (withinTemplatedSectionWithinAnElement) {
+				value = func.call(self);
+			} else {
+
+				// If this magic tag is within an attribute or an html element,
+				// set the flag to true so we avoid trying to live bind
+				// anything that func might be setup.
+				// TODO: the scanner should be able to set this up.
+				if (typeof status === "string" || status === 1) {
+					withinTemplatedSectionWithinAnElement = true;
+				}
+
+				// Sets up a listener so we know any can.view.lists called 
+				// when func is called
+				var listTeardown = can.view.setupLists();
+				// 
+				unbind = function () {
+					compute.unbind("change", emptyHandler);
+				};
+				// Create a compute that calls func and looks for dependencies.
+				// By passing `false`, this compute can not be a dependency of other 
+				// computes.  This is because live-bits are nested, but 
+				// handle their own updating. For example:
+				//     {{#if items.length}}{{#items}}{{.}}{{/items}}{{/if}}
+				// We do not want `{{#if items.length}}` changing the DOM if
+				// `{{#items}}` text changes.
+				compute = can.compute(func, self, false);
+
+				// Bind to get and temporarily cache the value of the compute.
+				compute.bind("change", emptyHandler);
+
+				// Call the "wrapping" function and get the binding information
+				listData = listTeardown();
+
+				// Get the value of the compute
+				value = compute();
+
+				// Let people know we are no longer within an element.
+				withinTemplatedSectionWithinAnElement = false;
+
+				// If we should setup live-binding.
+				setupLiveBinding = compute.hasDependencies;
+			}
+
+			if (listData) {
+				if (unbind) {
+					unbind();
+				}
+				return "<" + tag + can.view.hook(function (el, parentNode) {
+					live.list(el, listData.list, listData.renderer, self, parentNode);
+				}) + "></" + tag + ">";
+			}
+
+			// If we had no observes just return the value returned by func.
+			if (!setupLiveBinding || typeof value === "function") {
+				if (unbind) {
+					unbind();
+				}
+				return ((withinTemplatedSectionWithinAnElement || escape === 2 || !escape) ?
+					contentText :
+					contentEscape)(value, status === 0 && tag);
+			}
+
+			// the property (instead of innerHTML elements) to adjust. For
+			// example options should use textContent
+			var contentProp = elements.tagToContentPropMap[tagName];
+
+			// The magic tag is outside or between tags.
+			if (status === 0 && !contentProp) {
+				// Return an element tag with a hookup in place of the content
+				return "<" + tag + can.view.hook(
+					// if value is an object, it's likely something returned by .safeString
+					escape && typeof value !== "object" ?
+					// If we are escaping, replace the parentNode with 
+					// a text node who's value is `func`'s return value.
+					function (el, parentNode) {
+						live.text(el, compute, parentNode);
+						unbind();
+					} :
+					// If we are not escaping, replace the parentNode with a
+					// documentFragment created as with `func`'s return value.
+					function (el, parentNode) {
+						live.html(el, compute, parentNode);
+						unbind();
+						//children have to be properly nested HTML for buildFragment to work properly
+					}) + ">" + tagChildren(tag) + "</" + tag + ">";
+				// In a tag, but not in an attribute
+			} else if (status === 1) {
+				// remember the old attr name
+				pendingHookups.push(function (el) {
+					live.attributes(el, compute, compute());
+					unbind();
+				});
+
+				return compute();
+			} else if (escape === 2) { // In a special attribute like src or style
+
+				attributeName = status;
+				pendingHookups.push(function (el) {
+					live.specialAttribute(el, attributeName, compute);
+					unbind();
+				});
+				return compute();
+			} else { // In an attribute...
+				attributeName = status === 0 ? contentProp : status;
+				// if the magic tag is inside the element, like `<option><% TAG %></option>`,
+				// we add this hookup to the last element (ex: `option`'s) hookups.
+				// Otherwise, the magic tag is in an attribute, just add to the current element's
+				// hookups.
+				(status === 0 ? lastHookups : pendingHookups)
+					.push(function (el) {
+						live.attribute(el, attributeName, compute);
+						unbind();
+					});
+				return live.attributePlaceholder;
+			}
+		}
+	});
+
+	return can;
+});
+/*!
+ * CanJS - 2.0.7
+ * http://canjs.us/
+ * Copyright (c) 2014 Bitovi
+ * Wed, 26 Mar 2014 16:12:27 GMT
+ * Licensed MIT
+ * Includes: CanJS default build
+ * Download from: http://canjs.us/
+ */
+define('can/view/mustache',["can/util/library", "can/view/scope", "can/view", "can/view/scanner", "can/compute", "can/view/render"], function (can) {
+
+		// # mustache.js
+		// `can.Mustache`: The Mustache templating engine.
+		// 
+		// See the [Transformation](#section-29) section within *Scanning Helpers* for a detailed explanation 
+		// of the runtime render code design. The majority of the Mustache engine implementation 
+		// occurs within the *Transformation* scanning helper.
+
+		// ## Initialization
+		//
+		// Define the view extension.
+		can.view.ext = ".mustache";
+
+		// ### Setup internal helper variables and functions.
+		//
+		// An alias for the context variable used for tracking a stack of contexts.
+		// This is also used for passing to helper functions to maintain proper context.
+		var SCOPE = 'scope',
+			// An alias for the variable used for the hash object that can be passed
+			// to helpers via `options.hash`.
+			HASH = '___h4sh',
+			// An alias for the most used context stacking call.
+			CONTEXT_OBJ = '{scope:' + SCOPE + ',options:options}',
+			// argument names used to start the function (used by scanner and steal)
+			ARG_NAMES = SCOPE + ",options",
+
+			// matches arguments inside a {{ }}
+			argumentsRegExp = /((([^\s]+?=)?('.*?'|".*?"))|.*?)\s/g,
+
+			// matches a literal number, string, null or regexp
+			literalNumberStringBooleanRegExp = /^(('.*?'|".*?"|[0-9]+\.?[0-9]*|true|false|null|undefined)|((.+?)=(('.*?'|".*?"|[0-9]+\.?[0-9]*|true|false)|(.+))))$/,
+
+			// returns an object literal that we can use to look up a value in the current scope
+			makeLookupLiteral = function (type) {
+				return '{get:"' + type.replace(/"/g, '\\"') + '"}';
+			},
+			// returns if the object is a lookup
+			isLookup = function (obj) {
+				return obj && typeof obj.get === "string";
+			},
+
+			/*
+			 * Checks whether an object is like a can.Map. This takes into
+			 * fact that can.route is can.Map like.
+			 * @param  {[can.Map]}  observable
+			 * @return {Boolean} returns if the object is observable like.
+			 */
+			isObserveLike = function (obj) {
+				return obj instanceof can.Map || (obj && !! obj._get);
+			},
+
+			/*
+			 * Tries to determine if the object passed is an array.
+			 * @param  {Array}  obj The object to check.
+			 * @return {Boolean} returns if the object is an array.
+			 */
+			isArrayLike = function (obj) {
+				return obj && obj.splice && typeof obj.length === 'number';
+			},
+			// used to make sure .fn and .inverse are always called with a Scope like object
+			makeConvertToScopes = function (orignal, scope, options) {
+				return function (updatedScope, updatedOptions) {
+					if (updatedScope !== undefined && !(updatedScope instanceof can.view.Scope)) {
+						updatedScope = scope.add(updatedScope);
+					}
+					if (updatedOptions !== undefined && !(updatedOptions instanceof OptionsScope)) {
+						updatedOptions = options.add(updatedOptions);
+					}
+					return orignal(updatedScope, updatedOptions || options);
+				};
+			};
+
+		// ## Mustache
+		/**
+		 * @hide
+		 * The Mustache templating engine.
+		 * @param {Object} options	Configuration options
+		 */
+		var Mustache = function (options, helpers) {
+			// Support calling Mustache without the constructor.
+			// This returns a function that renders the template.
+			if (this.constructor !== Mustache) {
+				var mustache = new Mustache(options);
+				return function (data, options) {
+					return mustache.render(data, options);
+				};
+			}
+
+			// If we get a `function` directly, it probably is coming from
+			// a `steal`-packaged view.
+			if (typeof options === "function") {
+				this.template = {
+					fn: options
+				};
+				return;
+			}
+
+			// Set options on self.
+			can.extend(this, options);
+			this.template = this.scanner.scan(this.text, this.name);
+		};
+
+		/**
+		 * @add can.Mustache
+		 */
+		// Put Mustache on the `can` object.
+		can.Mustache = window.Mustache = Mustache;
+
+		/**
+		 * @prototype
+		 */
+		Mustache.prototype.
+		/**
+		 * @function can.Mustache.prototype.render render
+		 * @parent can.Mustache.prototype
+		 * @signature `mustache.render( data [, helpers] )`
+		 * @param {Object} data Data to interpolate into the template.
+		 * @return {String} The template with interpolated data, in string form.
+		 * @hide
+		 *
+		 * @body
+		 * Renders an object with view helpers attached to the view.
+		 *
+		 *		new Mustache({text: "<%= message %>"}).render({
+		 *			message: "foo"
+		 *		})
+		 */
+		render = function (data, options) {
+			if (!(data instanceof can.view.Scope)) {
+				data = new can.view.Scope(data || {});
+			}
+			if (!(options instanceof OptionsScope)) {
+				options = new OptionsScope(options || {});
+			}
+			options = options || {};
+
+			return this.template.fn.call(data, data, options);
+		};
+
+		can.extend(Mustache.prototype, {
+			// Share a singleton scanner for parsing templates.
+			scanner: new can.view.Scanner({
+				// A hash of strings for the scanner to inject at certain points.
+				text: {
+					// This is the logic to inject at the beginning of a rendered template. 
+					// This includes initializing the `context` stack.
+					start: "", //"var "+SCOPE+"= this instanceof can.view.Scope? this : new can.view.Scope(this);\n",
+					scope: SCOPE,
+					options: ",options: options",
+					argNames: ARG_NAMES
+				},
+
+				// An ordered token registry for the scanner.
+				// This needs to be ordered by priority to prevent token parsing errors.
+				// Each token follows the following structure:
+				//
+				//		[
+				//			// Which key in the token map to match.
+				//			"tokenMapName",
+				//
+				//			// A simple token to match, like "{{".
+				//			"token",
+				//
+				//			// Optional. A complex (regexp) token to match that 
+				//			// overrides the simple token.
+				//			"[\\s\\t]*{{",
+				//
+				//			// Optional. A function that executes advanced 
+				//			// manipulation of the matched content. This is 
+				//			// rarely used.
+				//			function(content){   
+				//				return content;
+				//			}
+				//		]
+				tokens: [
+					/**
+					 * @function can.Mustache.tags.escaped {{key}}
+					 *
+					 * @description Insert the value of the [can.Mustache.key key] into the
+					 * output of the template.
+					 *
+					 * @parent can.Mustache.tags 0
+					 *
+					 * @signature `{{key}}`
+					 *
+					 * @param {can.Mustache.key} key A key that references one of the following:
+					 *
+					 *  - A [can.Mustache.registerHelper registered helper].
+					 *  - A value within the current or parent
+					 *    [can.Mustache.context context]. If the value is a function or [can.compute], the
+					 *    function's return value is used.
+					 *
+					 * @return {String|Function|*}
+					 *
+					 * After the key's value is found (and set to any function's return value),
+					 * it is passed to [can.view.txt] as the result of a call to its `func`
+					 * argument. There, if the value is a:
+					 *
+					 *  - `null` or `undefined` - an empty string is inserted into the rendered template result.
+					 *  - `String` or `Number` - the value is inserted into the rendered template result.
+					 *  - `Function` - A [can.view.hook hookup] attribute or element is inserted so this function
+					 *    will be called back with the DOM element after it is created.
+					 *
+					 * @body
+					 *
+					 * ## Use
+					 *
+					 * `{{key}}` insert data into the template. It most commonly references
+					 * values within the current [can.Mustache.context context]. For example:
+					 *
+					 * Rendering:
+					 *
+					 *     <h1>{{name}}</h1>
+					 *
+					 * With:
+					 *
+					 *     {name: "Austin"}
+					 *
+					 * Results in:
+					 *
+					 *     <h1>Austin</h1>
+					 *
+					 * If the key value is a String or Number, it is inserted into the template.
+					 * If it is `null` or `undefined`, nothing is added to the template.
+					 *
+					 *
+					 * ## Nested Properties
+					 *
+					 * Mustache supports nested paths, making it possible to
+					 * look up properties nested deep inside the current context. For example:
+					 *
+					 * Rendering:
+					 *
+					 *     <h1>{{book.author}}</h1>
+					 *
+					 * With:
+					 *
+					 *     {
+					 *       book: {
+					 *         author: "Ernest Hemingway"
+					 *       }
+					 *     }
+					 *
+					 * Results in:
+					 *
+					 *     <h1>Ernest Hemingway</h1>
+					 *
+					 * ## Looking up values in parent contexts
+					 *
+					 * Sections and block helpers can create their own contexts. If a key's value
+					 * is not found in the current context, it will look up the key's value
+					 * in parent contexts. For example:
+					 *
+					 * Rendering:
+					 *
+					 *     {{#chapters}}
+					 *        <li>{{title}} - {{name}}</li>
+					 *     {{chapters}}
+					 *
+					 * With:
+					 *
+					 *     {
+					 *       title: "The Book of Bitovi"
+					 *       chapters: [{name: "Breakdown"}]
+					 *     }
+					 *
+					 * Results in:
+					 *
+					 *     <li>The Book of Bitovi - Breakdown</li>
+					 *
+					 *
+					 */
+					// Return unescaped
+					["returnLeft", "{{{", "{{[{&]"],
+					// Full line comments
+					["commentFull", "{{!}}", "^[\\s\\t]*{{!.+?}}\\n"],
+					/**
+					 * @function can.Mustache.tags.comment {{!key}}
+					 *
+					 * @parent can.Mustache.tags 7
+					 *
+					 * @description A comment that doesn't get inserted into the rendered result.
+					 *
+					 * @signature `{{!key}}`
+					 *
+					 * The comment tag operates similarly to a `<!-- -->` tag in HTML. It exists in your template but never shows up.
+					 *
+					 * @param {can.Mustache.key} key Everything within this tag is completely ignored.
+					 * @return {String}
+					 *
+					 */
+					// Inline comments
+					["commentLeft", "{{!", "(\\n[\\s\\t]*{{!|{{!)"],
+					/**
+					 * @function can.Mustache.tags.unescaped {{{key}}}
+					 *
+					 * @parent can.Mustache.tags 1
+					 *
+					 * @description Insert the unescaped value of the [can.Mustache.key key] into the
+					 * output of the template.
+					 *
+					 * @signature `{{{key}}}`
+					 *
+					 * Behaves just like [can.Mustache.tags.escaped {{key}}] and [can.Mustache.helpers.helper {{helper}}] but does not
+					 * escape the result.
+					 *
+					 * @param {can.Mustache.key} key A key that references a value within the current or parent
+					 * context. If the value is a function or can.compute, the function's return value is used.
+					 * @return {String|Function|*}
+					 *
+					 *
+					 */
+					//
+					/**
+					 * @function can.Mustache.tags.unescaped2 {{&key}}
+					 *
+					 * @parent can.Mustache.tags 2
+					 *
+					 * @description Insert the unescaped value of the [can.Mustache.key key] into the
+					 * output of the template.
+					 *
+					 * @signature `{{&key}}`
+					 *
+					 * The `{{&key}}` tag is an alias for [can.Mustache.tags.unescaped {{{key}}}], behaving just
+					 * like [can.Mustache.tags.escaped {{key}}] and [can.Mustache.helpers.helper {{helper}}] but does not
+					 * escape the result.
+					 *
+					 * @param {can.Mustache.key} key A key that references a value within the current or parent
+					 * context. If the value is a function or can.compute, the function's return value is used.
+					 * @return {String|Function|*}
+					 *
+					 */
+					// Full line escapes
+					// This is used for detecting lines with only whitespace and an escaped tag
+					["escapeFull", "{{}}", "(^[\\s\\t]*{{[#/^][^}]+?}}\\n|\\n[\\s\\t]*{{[#/^][^}]+?}}\\n|\\n[\\s\\t]*{{[#/^][^}]+?}}$)",
+						function (content) {
+							return {
+								before: /^\n.+?\n$/.test(content) ? '\n' : '',
+								content: content.match(/\{\{(.+?)\}\}/)[1] || ''
+							};
+						}
+					],
+					// Return escaped
+					["escapeLeft", "{{"],
+					// Close return unescaped
+					["returnRight", "}}}"],
+					// Close tag
+					["right", "}}"]
+				],
+
+				// ## Scanning Helpers
+				//
+				// This is an array of helpers that transform content that is within escaped tags like `{{token}}`. These helpers are solely for the scanning phase; they are unrelated to Mustache/Handlebars helpers which execute at render time. Each helper has a definition like the following:
+				//
+				//		{
+				//			// The content pattern to match in order to execute.
+				//			// Only the first matching helper is executed.
+				//			name: /pattern to match/,
+				//
+				//			// The function to transform the content with.
+				//			// @param {String} content   The content to transform.
+				//			// @param {Object} cmd       Scanner helper data.
+				//			//                           {
+				//			//                             insert: "insert command",
+				//			//                             tagName: "div",
+				//			//                             status: 0
+				//			//                           }
+				//			fn: function(content, cmd) {
+				//				return 'for text injection' || 
+				//					{ raw: 'to bypass text injection' };
+				//			}
+				//		}
+				helpers: [
+					// ### Partials
+					//
+					// Partials begin with a greater than sign, like {{> box}}.
+					// 
+					// Partials are rendered at runtime (as opposed to compile time), 
+					// so recursive partials are possible. Just avoid infinite loops.
+					// 
+					// For example, this template and partial:
+					// 
+					//		base.mustache:
+					//			<h2>Names</h2>
+					//			{{#names}}
+					//				{{> user}}
+					//			{{/names}}
+					//
+					//		user.mustache:
+					//		<strong>{{name}}</strong>
+					{
+						name: /^>[\s]*\w*/,
+						fn: function (content, cmd) {
+							// Get the template name and call back into the render method,
+							// passing the name and the current context.
+							var templateName = can.trim(content.replace(/^>\s?/, ''))
+								.replace(/["|']/g, "");
+							return "can.Mustache.renderPartial('" + templateName + "'," + ARG_NAMES + ")";
+						}
+					},
+
+					// ### Data Hookup
+					// 
+					// This will attach the data property of `this` to the element
+					// its found on using the first argument as the data attribute
+					// key.
+					// 
+					// For example:
+					//
+					//		<li id="nameli" {{ data 'name' }}></li>
+					// 
+					// then later you can access it like:
+					// 
+					//		can.$('#nameli').data('name');
+					/**
+					 * @function can.Mustache.helpers.data {{data name}}
+					 * @parent can.Mustache.htags 7
+					 * @signature `{{data name}}`
+					 *
+					 * Adds the current [can.Mustache.context context] to the
+					 * element's [can.data].
+					 *
+					 * @param {String} name The name of the data attribute to use for the
+					 * context.
+					 *
+					 * @body
+					 *
+					 * ## Use
+					 *
+					 * It is common for you to want some data in the template to be available
+					 * on an element.  `{{data name}}` allows you to save the
+					 * context so it can later be retrieved by [can.data] or
+					 * `$.fn.data`. For example,
+					 *
+					 * The template:
+					 *
+					 *     <ul>
+					 *       <li id="person" {{data 'person'}}>{{name}}</li>
+					 *     </ul>
+					 *
+					 * Rendered with:
+					 *
+					 *     document.body.appendChild(
+					 *       can.view.mustache(template,{ person: { name: 'Austin' } });
+					 *
+					 * Retrieve the person data back with:
+					 *
+					 *     $("#person").data("person")
+					 *
+					 */
+					{
+						name: /^\s*data\s/,
+						fn: function (content, cmd) {
+							var attr = content.match(/["|'](.*)["|']/)[1];
+							// return a function which calls `can.data` on the element
+							// with the attribute name with the current context.
+							return "can.proxy(function(__){" +
+							// "var context = this[this.length-1];" +
+							// "context = context." + STACKED + " ? context[context.length-2] : context; console.warn(this, context);" +
+							"can.data(can.$(__),'" + attr + "', this.attr('.')); }, " + SCOPE + ")";
+						}
+					}, {
+						name: /\s*\(([\$\w]+)\)\s*->([^\n]*)/,
+						fn: function (content) {
+							var quickFunc = /\s*\(([\$\w]+)\)\s*->([^\n]*)/,
+								parts = content.match(quickFunc);
+
+							//find 
+							return "can.proxy(function(__){var " + parts[1] + "=can.$(__);with(" + SCOPE + ".attr('.')){" + parts[2] + "}}, this);";
+						}
+					},
+					// ### Transformation (default)
+					//
+					// This transforms all content to its interpolated equivalent,
+					// including calls to the corresponding helpers as applicable. 
+					// This outputs the render code for almost all cases.
+					//
+					// #### Definitions
+					// 
+					// * `context` - This is the object that the current rendering context operates within. 
+					//		Each nested template adds a new `context` to the context stack.
+					// * `stack` - Mustache supports nested sections, 
+					//		each of which add their own context to a stack of contexts.
+					//		Whenever a token gets interpolated, it will check for a match against the 
+					//		last context in the stack, then iterate through the rest of the stack checking for matches.
+					//		The first match is the one that gets returned.
+					// * `Mustache.txt` - This serializes a collection of logic, optionally contained within a section.
+					//		If this is a simple interpolation, only the interpolation lookup will be passed.
+					//		If this is a section, then an `options` object populated by the truthy (`options.fn`) and 
+					//		falsey (`options.inverse`) encapsulated functions will also be passed. This section handling 
+					//		exists to support the runtime context nesting that Mustache supports.
+					// * `Mustache.get` - This resolves an interpolation reference given a stack of contexts.
+					// * `options` - An object containing methods for executing the inner contents of sections or helpers.  
+					//		`options.fn` - Contains the inner template logic for a truthy section.  
+					//		`options.inverse` - Contains the inner template logic for a falsey section.  
+					//		`options.hash` - Contains the merged hash object argument for custom helpers.
+					//
+					// #### Design
+					//
+					// This covers the design of the render code that the transformation helper generates.
+					//
+					// ##### Pseudocode
+					// 
+					// A detailed explanation is provided in the following sections, but here is some brief pseudocode
+					// that gives a high level overview of what the generated render code does (with a template similar to  
+					// `"{{#a}}{{b.c.d.e.name}}{{/a}}" == "Phil"`).
+					//
+					// *Initialize the render code.*
+					// 
+					//		view = []
+					//		context = []
+					//		stack = fn { context.concat([this]) }
+					//
+					//	*Render the root section.*
+					//
+					//	view.push( "string" )
+					//	view.push( can.view.txt(
+					//
+					// *Render the nested section with `can.Mustache.txt`.*
+					//
+					//			txt(
+					//
+					// *Add the current context to the stack.*
+					//
+					//			stack(),
+					//
+					// *Flag this for truthy section mode.*
+					//
+					//			"#",
+					//
+					// *Interpolate and check the `a` variable for truthyness using the stack with `can.Mustache.get`.*
+					// 
+					//			get( "a", stack() ),
+					//
+					// *Include the nested section's inner logic.
+					// The stack argument is usually the parent section's copy of the stack, 
+					// but it can be an override context that was passed by a custom helper.
+					// Sections can nest `0..n` times -- **NESTCEPTION**.*
+					//
+					//			{ fn: fn(stack) {
+					//
+					// *Render the nested section (everything between the `{{#a}}` and `{{/a}}` tokens).*
+					//
+					//			view = []
+					//			view.push( "string" )
+					//			view.push(
+					//
+					// *Add the current context to the stack.*
+					//
+					//			stack(),
+					//
+					// *Flag this as interpolation-only mode.*
+					//
+					//			null,
+					//
+					// *Interpolate the `b.c.d.e.name` variable using the stack.*
+					//
+					//			get( "b.c.d.e.name", stack() ),
+					//			)
+					//			view.push( "string" )
+					//
+					// *Return the result for the nested section.*
+					//
+					//					return view.join()
+					//			}}
+					//			)
+					//		))
+					//		view.push( "string" )
+					//
+					// *Return the result for the root section, which includes all nested sections.*
+					//
+					//		return view.join()
+					//
+					// ##### Initialization
+					//
+					// Each rendered template is started with the following initialization code:
+					//
+					//		var ___v1ew = [];
+					//		var ___c0nt3xt = [];
+					//		___c0nt3xt.__sc0pe = true;
+					//		var __sc0pe = function(context, self) {
+					//		var s;
+					//		if (arguments.length == 1 && context) {
+					//			s = !context.__sc0pe ? [context] : context;
+					//			} else {
+					//			s = context && context.__sc0pe
+					//					? context.concat([self]) 
+					//					: __sc0pe(context).concat([self]);
+					//			}
+					//			return (s.__sc0pe = true) && s;
+					//		};
+					//
+					// The `___v1ew` is the the array used to serialize the view.
+					// The `___c0nt3xt` is a stacking array of contexts that slices and expands with each nested section.
+					// The `__sc0pe` function is used to more easily update the context stack in certain situations.
+					// Usually, the stack function simply adds a new context (`self`/`this`) to a context stack. 
+					// However, custom helpers will occasionally pass override contexts that need their own context stack.
+					//
+					// ##### Sections
+					//
+					// Each section, `{{#section}} content {{/section}}`, within a Mustache template generates a section 
+					// context in the resulting render code. The template itself is treated like a root section, with the 
+					// same execution logic as any others. Each section can have `0..n` nested sections within it.
+					//
+					// Here's an example of a template without any descendent sections.  
+					// Given the template: `"{{a.b.c.d.e.name}}" == "Phil"`  
+					// Would output the following render code:
+					//
+					//		___v1ew.push("\"");
+					//		___v1ew.push(can.view.txt(1, '', 0, this, function() {
+					//			return can.Mustache.txt(__sc0pe(___c0nt3xt, this), null,
+					//				can.Mustache.get("a.b.c.d.e.name", 
+					//					__sc0pe(___c0nt3xt, this))
+					//			);
+					//		}));
+					//		___v1ew.push("\" == \"Phil\"");
+					//
+					// The simple strings will get appended to the view. Any interpolated references (like `{{a.b.c.d.e.name}}`) 
+					// will be pushed onto the view via `can.view.txt` in order to support live binding.
+					// The function passed to `can.view.txt` will call `can.Mustache.txt`, which serializes the object data by doing 
+					// a context lookup with `can.Mustache.get`.
+					//
+					// `can.Mustache.txt`'s first argument is a copy of the context stack with the local context `this` added to it.
+					// This stack will grow larger as sections nest.
+					//
+					// The second argument is for the section type. This will be `"#"` for truthy sections, `"^"` for falsey, 
+					// or `null` if it is an interpolation instead of a section.
+					//
+					// The third argument is the interpolated value retrieved with `can.Mustache.get`, which will perform the 
+					// context lookup and return the approriate string or object.
+					//
+					// Any additional arguments, if they exist, are used for passing arguments to custom helpers.
+					//
+					// For nested sections, the last argument is an `options` object that contains the nested section's logic.
+					//
+					// Here's an example of a template with a single nested section.  
+					// Given the template: `"{{#a}}{{b.c.d.e.name}}{{/a}}" == "Phil"`  
+					// Would output the following render code:
+					//
+					//		___v1ew.push("\"");
+					//		___v1ew.push(can.view.txt(0, '', 0, this, function() {
+					//			return can.Mustache.txt(__sc0pe(___c0nt3xt, this), "#",
+					//				can.Mustache.get("a", __sc0pe(___c0nt3xt, this)), 
+					//					[{
+					//					_: function() {
+					//						return ___v1ew.join("");
+					//					}
+					//				}, {
+					//				fn: function(___c0nt3xt) {
+					//					var ___v1ew = [];
+					//					___v1ew.push(can.view.txt(1, '', 0, this,
+					//								function() {
+					//								return can.Mustache.txt(
+					//								__sc0pe(___c0nt3xt, this),
+					//								null,
+					//								can.Mustache.get("b.c.d.e.name",
+					//								__sc0pe(___c0nt3xt, this))
+					//								);
+					//						}
+					//						));
+					//						return ___v1ew.join("");
+					//					}
+					//				}]
+					//			)
+					//		}));
+					//		___v1ew.push("\" == \"Phil\"");
+					//
+					// This is specified as a truthy section via the `"#"` argument. The last argument includes an array of helper methods used with `options`.
+					// These act similarly to custom helpers: `options.fn` will be called for truthy sections, `options.inverse` will be called for falsey sections.
+					// The `options._` function only exists as a dummy function to make generating the section nesting easier (a section may have a `fn`, `inverse`,
+					// or both, but there isn't any way to determine that at compilation time).
+					// 
+					// Within the `fn` function is the section's render context, which in this case will render anything between the `{{#a}}` and `{{/a}}` tokens.
+					// This function has `___c0nt3xt` as an argument because custom helpers can pass their own override contexts. For any case where custom helpers
+					// aren't used, `___c0nt3xt` will be equivalent to the `__sc0pe(___c0nt3xt, this)` stack created by its parent section. The `inverse` function
+					// works similarly, except that it is added when `{{^a}}` and `{{else}}` are used. `var ___v1ew = []` is specified in `fn` and `inverse` to 
+					// ensure that live binding in nested sections works properly.
+					//
+					// All of these nested sections will combine to return a compiled string that functions similar to EJS in its uses of `can.view.txt`.
+					//
+					// #### Implementation
+					{
+						name: /^.*$/,
+						fn: function (content, cmd) {
+							var mode = false,
+								result = [];
+
+							// Trim the content so we don't have any trailing whitespace.
+							content = can.trim(content);
+
+							// Determine what the active mode is.
+							// 
+							// * `#` - Truthy section
+							// * `^` - Falsey section
+							// * `/` - Close the prior section
+							// * `else` - Inverted section (only exists within a truthy/falsey section)
+							if (content.length && (mode = content.match(/^([#^/]|else$)/))) {
+								mode = mode[0];
+								switch (mode) {
+									/**
+									 * @function can.Mustache.helpers.section {{#key}}
+									 * @parent can.Mustache.tags 3
+									 *
+									 * @signature `{{#key}}BLOCK{{/key}}`
+									 *
+									 * Render blocks of text one or more times, depending
+									 * on the value of the key in the current context.
+									 *
+									 * @param {can.Mustache.key} key A key that references a value within the current or parent
+									 * [can.Mustache.context context]. If the value is a function or [can.compute], the
+									 * function's return value is used.
+									 *
+									 *
+									 * @return {String}
+									 *
+									 * Depending on the value's type, the following actions happen:
+									 *
+									 * - `Array` or [can.List] - the block is rendered for
+									 *   each item in the array. The [can.Mustache.context context] is set to
+									 *   the item within each block rendering.
+									 * - A `truthy` value - the block is rendered with the [can.Mustache.context context]
+									 *   set to the value.
+									 * - A `falsey` value - the block is not rendered.
+									 *
+									 * The rendered result of the blocks, block or an empty string is returned.
+									 *
+									 * @body
+									 *
+									 * Sections contain text blocks and evaluate whether to render it or not.  If
+									 * the object evaluates to an array it will iterate over it and render the block
+									 * for each item in the array.  There are four different types of sections.
+									 *
+									 * ## Falseys or Empty Arrays
+									 *
+									 * If the value returns a `false`, `undefined`, `null`, `""` or `[]` we consider
+									 * that a *falsey* value.
+									 *
+									 * If the value is falsey, the section will **NOT** render the block.
+									 *
+									 *	{
+									 *		friends: false
+									 *	}
+									 *
+									 *	{{#friends}}
+									 *		Never shown!
+									 *	{{/friends}}
+									 *
+									 *
+									 * ## Arrays
+									 *
+									 * If the value is a non-empty array, sections will iterate over the
+									 * array of items, rendering the items in the block.
+									 *
+									 * For example, a list of friends will iterate
+									 * over each of those items within a section.
+									 *
+									 *     {
+									 *         friends: [
+									 *             { name: "Austin" },
+									 *             { name: "Justin" }
+									 *         ]
+									 *     }
+									 *
+									 *     <ul>
+									 *         {{#friends}}
+									 *             <li>{{name}}</li>
+									 *         {{/friends}}
+									 *     </ul>
+									 *
+									 * would render:
+									 *
+									 *     <ul>
+									 *         <li>Austin</li>
+									 *         <li>Justin</li>
+									 *     </ul>
+									 *
+									 * Reminder: Sections will reset the current context to the value for which it is iterating.
+									 * See the [basics of contexts](#Basics) for more information.
+									 *
+									 * ## Truthys
+									 *
+									 * When the value is a non-falsey object but not a list, it is considered truthy and will be used
+									 * as the context for a single rendering of the block.
+									 *
+									 *     {
+									 *         friends: { name: "Jon" }
+									 *     }
+									 *
+									 *     {{#friends}}
+									 *         Hi {{name}}
+									 *     {{/friends}}
+									 *
+									 * would render:
+									 *
+									 *     Hi Jon!
+									 */
+									// 
+									/**
+									 * @function can.Mustache.helpers.helper {{helper args hashes}}
+									 * @parent can.Mustache.htags 0
+									 *
+									 * @description Calls a mustache helper function and inserts its return value into
+									 * the rendered template.
+									 *
+									 * @signature `{{helper [args...] [hashProperty=hashValue...]}}`
+									 *
+									 * Calls a mustache helper function or a function. For example:
+									 *
+									 * The template:
+									 *
+									 *     <p>{{madLib "Lebron James" verb 4 foo="bar"}}</p>
+									 *
+									 * Rendered with:
+									 *
+									 *     {verb: "swept"}
+									 *
+									 * Will call a `madLib` helper with the following arguements:
+									 *
+									 *     can.Mustache.registerHelper('madLib',
+									 *       function(subject, verb, number, options){
+									 *         // subject -> "Lebron James"
+									 *         // verb -> "swept"
+									 *         // number -> 4
+									 *         // options.hash.foo -> "bar"
+									 *     });
+									 *
+									 * @param {can.Mustache.key} helper A key that finds a [can.Mustache.helper helper function]
+									 * that is either [can.Mustache.registerHelper registered] or found within the
+									 * current or parent [can.Mustache.context context].
+									 *
+									 * @param {...can.Mustache.key|String|Number} [args] Space seperated arguments
+									 * that get passed to the helper function as arguments. If the key's value is a:
+									 *
+									 *  - [can.Map] - A getter/setter [can.compute] is passed.
+									 *  - [can.compute] - The can.compute is passed.
+									 *  - `function` - The function's return value is passed.
+									 *
+									 * @param {String} hashProperty
+									 *
+									 * A property name that gets added to a [can.Mustache.helperOptions helper options]'s
+									 * hash object.
+									 *
+									 * @param {...can.Mustache.key|String|Number} hashValue A value that gets
+									 * set as a property value of the [can.Mustache.helperOptions helper option argument]'s
+									 * hash object.
+									 *
+									 * @body
+									 *
+									 * ## Use
+									 *
+									 * The `{{helper}}` syntax is used to call out to Mustache [can.Mustache.helper helper functions] functions
+									 * that may contain more complex functionality. `helper` is a [can.Mustache.key key] that must match either:
+									 *
+									 *  - a [can.Mustache.registerHelper registered helper function], or
+									 *  - a function in the current or parent [can.Mustache.context contexts]
+									 *
+									 * The following example shows both cases.
+									 *
+									 * The Template:
+									 *
+									 *     <p>{{greeting}} {{user}}</p>
+									 *
+									 * Rendered with data:
+									 *
+									 *     {
+									 *       user: function(){ return "Justin" }
+									 *     }
+									 *
+									 * And a with a registered helper like:
+									 *
+									 *     can.Mustache.registerHelper('greeting', function(){
+									 *       return "Hello"
+									 *     });
+									 *
+									 * Results in:
+									 *
+									 *     <p>Hello Justin</p>
+									 *
+									 * ## Arguments
+									 *
+									 * Arguments can be passed from the template to helper function by
+									 * listing space seperated strings, numbers or other [can.Mustache.key keys] after the
+									 * `helper` name.  For example:
+									 *
+									 * The template:
+									 *
+									 *     <p>{{madLib "Lebron James" verb 4}}</p>
+									 *
+									 * Rendered with:
+									 *
+									 *     {verb: "swept"}
+									 *
+									 * Will call a `madLib` helper with the following arguements:
+									 *
+									 *     can.Mustache.registerHelper('madLib',
+									 *       function(subject, verb, number, options){
+									 *         // subject -> "Lebron James"
+									 *         // verb -> "swept"
+									 *         // number -> 4
+									 *     });
+									 *
+									 * If an argument `key` value is a [can.Map] property, the Observe's
+									 * property is converted to a getter/setter [can.compute]. For example:
+									 *
+									 * The template:
+									 *
+									 *     <p>What! My name is: {{mr user.name}}</p>
+									 *
+									 * Rendered with:
+									 *
+									 *     {user: new can.Map({name: "Slim Shady"})}
+									 *
+									 * Needs the helper to check if name is a function or not:
+									 *
+									 *     can.Mustache.registerHelper('mr',function(name){
+									 *       return "Mr. "+ (typeof name === "function" ?
+									 *                       name():
+									 *                       name)
+									 *     })
+									 *
+									 * This behavior enables two way binding helpers and is explained in more detail
+									 * on the [can.Mustache.helper helper functions] docs.
+									 *
+									 * ## Hash
+									 *
+									 * If enumerated arguments isn't an appropriate way to configure the behavior
+									 * of a helper, it's possible to pass a hash of key-value pairs to the
+									 * [can.Mustache.helperOptions helper option argument]'s
+									 * hash object.  Properties and values are specified
+									 * as `hashProperty=hashValue`.  For example:
+									 *
+									 * The template:
+									 *
+									 *     <p>My {{excuse who=pet how="shreded"}}</p>
+									 * `
+									 * And the helper:
+									 *
+									 *     can.Mustache.registerHelper("excuse",function(options){
+									 *       return ["My",
+									 *         options.hash.who || "dog".
+									 *         options.hash.how || "ate",
+									 *         "my",
+									 *         options.hash.what || "homework"].join(" ")
+									 *     })
+									 *
+									 * Render with:
+									 *
+									 *     {pet: "cat"}
+									 *
+									 * Results in:
+									 *
+									 *     <p>My cat shareded my homework</p>
+									 *
+									 * ## Returning an element callback function
+									 *
+									 * If a helper returns a function, that function is called back after
+									 * the template has been rendered into DOM elements. This can
+									 * be used to create mustache tags that have rich behavior. Read about it
+									 * on the [can.Mustache.helper helper function] page.
+									 *
+									 */
+									// 
+									/**
+									 * @function can.Mustache.helpers.sectionHelper {{#helper args hashes}}
+									 * @parent can.Mustache.htags 1
+									 *
+									 * Calls a mustache helper function with a block, and optional inverse
+									 * block.
+									 *
+									 * @signature `{{#helper [args...] [hashName=hashValue...]}}BLOCK{{/helper}}`
+									 *
+									 * Calls a mustache helper function or a function with a block to
+									 * render.
+									 *
+									 * The template:
+									 *
+									 *     <p>{{countTo number}}{{num}}{{/countTo}}</p>
+									 *
+									 * Rendered with:
+									 *
+									 *     {number: 5}
+									 *
+									 * Will call the `countTo` helper:
+									 *
+									 *     can.Mustache.registerHelper('madLib',
+									 *       function(number, options){
+									 *			var out = []
+									 *         for(var i =0; i < number; i++){
+									 *           out.push( options.fn({num: i+1}) )
+									 *         }
+									 *         return out.join(" ")
+									 *     });
+									 *
+									 * Results in:
+									 *
+									 *     <p>1 2 3 4 5</p>
+									 *
+									 * @param {can.Mustache.key} helper A key that finds a [can.Mustache.helper helper function]
+									 * that is either [can.Mustache.registerHelper registered] or found within the
+									 * current or parent [can.Mustache.context context].
+									 *
+									 * @param {...can.Mustache.key|String|Number} [args] Space seperated arguments
+									 * that get passed to the helper function as arguments. If the key's value is a:
+									 *
+									 *  - [can.Map] - A getter/setter [can.compute] is passed.
+									 *  - [can.compute] - The can.compute is passed.
+									 *  - `function` - The function's return value is passed.
+									 *
+									 * @param {String} hashProperty
+									 *
+									 * A property name that gets added to a [can.Mustache.helperOptions helper options]'s
+									 * hash object.
+									 *
+									 * @param {...can.Mustache.key|String|Number} hashValue A value that gets
+									 * set as a property value of the [can.Mustache.helperOptions helper option argument]'s
+									 * hash object.
+									 *
+									 * @param {mustache} BLOCK A mustache template that gets compiled and
+									 * passed to the helper function as the [can.Mustache.helperOptions options argument's] `fn`
+									 * property.
+									 *
+									 *
+									 * @signature `{{#helper [args...] [hashName=hashValue...]}}BLOCK{{else}}INVERSE{{/helper}}`
+									 *
+									 * Calls a mustache helper function or a function with a `fn` and `inverse` block to
+									 * render.
+									 *
+									 * The template:
+									 *
+									 *     <p>The bed is
+									 *        {{isJustRight firmness}}
+									 *           pefect!
+									 *        {{else}}
+									 *           uncomfortable.
+									 *        {{/justRight}}</p>
+									 *
+									 * Rendered with:
+									 *
+									 *     {firmness: 45}
+									 *
+									 * Will call the `isJustRight` helper:
+									 *
+									 *     can.Mustache.registerHelper('isJustRight',
+									 *       function(number, options){
+									 *			if(number > 50){
+									 *           return options.fn(this)
+									 *         } else {
+									 *           return options.inverse(this)
+									 *         }
+									 *         return out.join(" ")
+									 *     });
+									 *
+									 * Results in:
+									 *
+									 *     <p>The bed is uncomfortable.</p>
+									 *
+									 * @param {can.Mustache.key} helper A key that finds a [can.Mustache.helper helper function]
+									 * that is either [can.Mustache.registerHelper registered] or found within the
+									 * current or parent [can.Mustache.context context].
+									 *
+									 * @param {...can.Mustache.key|String|Number} [args] Space seperated arguments
+									 * that get passed to the helper function as arguments. If the key's value is a:
+									 *
+									 *  - [can.Map] - A getter/setter [can.compute] is passed.
+									 *  - [can.compute] - The can.compute is passed.
+									 *  - `function` - The function's return value is passed.
+									 *
+									 * @param {String} hashProperty
+									 *
+									 * A property name that gets added to a [can.Mustache.helperOptions helper options]'s
+									 * hash object.
+									 *
+									 * @param {...can.Mustache.key|String|Number} hashValue A value that gets
+									 * set as a property value of the [can.Mustache.helperOptions helper option argument]'s
+									 * hash object.
+									 *
+									 * @param {mustache} BLOCK A mustache template that gets compiled and
+									 * passed to the helper function as the [can.Mustache.helperOptions options argument's] `fn`
+									 * property.
+									 *
+									 * @param {mustache} INVERSE A mustache template that gets compiled and
+									 * passed to the helper function as the [can.Mustache.helperOptions options argument's] `inverse`
+									 * property.
+									 *
+									 *
+									 * @body
+									 *
+									 * ## Use
+									 *
+									 * Read the [use section of {{helper}}](can.Mustache.helpers.helper.html#section_Use) to better understand how:
+									 *
+									 *  - [Helper functions are found](can.Mustache.helpers.helper.html#section_Arguments)
+									 *  - [Arguments are passed to the helper](can.Mustache.helpers.helper.html#section_Arguments)
+									 *  - [Hash values are passed to the helper](can.Mustache.helpers.helper.html#section_Hash)
+									 *
+									 * Read how [helpers that return functions](can.Mustache.helper.html#section_Returninganelementcallbackfunction) can
+									 * be used for rich behavior like 2-way binding.
+									 *
+									 */
+									// Open a new section.
+								case '#':
+									/**
+									 * @function can.Mustache.helpers.inverse {{^key}}
+									 * @parent can.Mustache.tags 5
+									 *
+									 * @signature `{{^key}}BLOCK{{/key}}`
+									 *
+									 * Render blocks of text if the value of the key
+									 * is falsey.  An inverted section syntax is similar to regular
+									 * sections except it begins with a caret rather than a
+									 * pound. If the value referenced is falsey, the section will render.
+									 *
+									 * @param {can.Mustache.key} key A key that references a value within the current or parent
+									 * [can.Mustache.context context]. If the value is a function or [can.compute], the
+									 * function's return value is used.
+									 *
+									 * @return {String}
+									 *
+									 * Depending on the value's type, the following actions happen:
+									 *
+									 * - A `truthy` value - the block is not rendered.
+									 * - A `falsey` value - the block is rendered.
+									 *
+									 * The rendered result of the block or an empty string is returned.
+									 *
+									 * @body
+									 *
+									 * ## Use
+									 *
+									 * Inverted sections match falsey values. An inverted section
+									 * syntax is similar to regular sections except it begins with a caret
+									 * rather than a pound. If the value referenced is falsey, the section
+									 * will render. For example:
+									 *
+									 *
+									 * The template:
+									 *
+									 *     <ul>
+									 *         {{#friends}}
+									 *             </li>{{name}}</li>
+									 *         {{/friends}}
+									 *         {{^friends}}
+									 *             <li>No friends.</li>
+									 *         {{/friends}}
+									 *     </ul>
+									 *
+									 * And data:
+									 *
+									 *     {
+									 *         friends: []
+									 *     }
+									 *
+									 * Results in:
+									 *
+									 *
+									 *     <ul>
+									 *         <li>No friends.</li>
+									 *     </ul>
+									 */
+								case '^':
+									if (cmd.specialAttribute) {
+										result.push(cmd.insert + 'can.view.onlytxt(this,function(){ return ');
+									} else {
+										result.push(cmd.insert + 'can.view.txt(0,\'' + cmd.tagName + '\',' + cmd.status + ',this,function(){ return ');
+									}
+									break;
+									// Close the prior section.
+									/**
+									 * @function can.Mustache.helpers.close {{/key}}
+									 * @parent can.Mustache.tags 4
+									 *
+									 * @signature `{{/key}}`
+									 *
+									 * Ends a [can.Mustache.helpers.section {{#key}}] or [can.Mustache.helpers.sectionHelper {{#helper}}]
+									 * block.
+									 *
+									 * @param {can.Mustache.key} [key] A key that matches the opening key or helper name. It's also
+									 * possible to simply write `{{/}}` to end a block.
+									 */
+								case '/':
+									return {
+										raw: 'return ___v1ew.join("");}}])}));'
+									};
+								}
+
+								// Trim the mode off of the content.
+								content = content.substring(1);
+							}
+
+							// `else` helpers are special and should be skipped since they don't 
+							// have any logic aside from kicking off an `inverse` function.
+							if (mode !== 'else') {
+								var args = [],
+									i = 0,
+									m;
+
+								// Start the content render block.
+								result.push('can.Mustache.txt(\n' + CONTEXT_OBJ + ',\n' + (mode ? '"' + mode + '"' : 'null') + ',');
+
+								// Parse the helper arguments.
+								// This needs uses this method instead of a split(/\s/) so that 
+								// strings with spaces can be correctly parsed.
+								var hashes = [];
+
+								(can.trim(content) + ' ')
+									.replace(argumentsRegExp, function (whole, arg) {
+
+										// Check for special helper arguments (string/number/boolean/hashes).
+										if (i && (m = arg.match(literalNumberStringBooleanRegExp))) {
+											// Found a native type like string/number/boolean.
+											if (m[2]) {
+												args.push(m[0]);
+											}
+											// Found a hash object.
+											else {
+												// Addd to the hash object.
+
+												hashes.push(m[4] + ":" + (m[6] ? m[6] : makeLookupLiteral(m[5])));
+											}
+										}
+										// Otherwise output a normal interpolation reference.
+										else {
+											args.push(makeLookupLiteral(arg));
+										}
+										i++;
+									});
+
+								result.push(args.join(","));
+								if (hashes.length) {
+									result.push(",{" + HASH + ":{" + hashes.join(",") + "}}");
+								}
+
+							}
+
+							// Create an option object for sections of code.
+							if (mode && mode !== 'else') {
+								result.push(',[\n\n');
+							}
+							switch (mode) {
+								// Truthy section
+							case '#':
+								result.push('{fn:function(' + ARG_NAMES + '){var ___v1ew = [];');
+								break;
+								// If/else section
+								// Falsey section
+								/**
+								 * @function can.Mustache.helpers.else {{else}}
+								 * @parent can.Mustache.htags 3
+								 *
+								 * @signature `{{#helper}}BLOCK{{else}}INVERSE{{/helper}}`
+								 *
+								 * Creates an `inverse` block for a [can.Mustache.helper helper function]'s
+								 * [can.Mustache.helperOptions options argument]'s `inverse` property.
+								 *
+								 * @param {can.Mustache} INVERSE a mustache template coverted to a
+								 * function and set as the [can.Mustache.helper helper function]'s
+								 * [can.Mustache.helperOptions options argument]'s `inverse` property.
+								 *
+								 * @body
+								 *
+								 * ## Use
+								 *
+								 * For more information on how `{{else}}` is used checkout:
+								 *
+								 *  - [can.Mustache.helpers.if {{if key}}]
+								 *  - [can.Mustache.helpers.sectionHelper {{#helper}}]
+								 *
+								 */
+							case 'else':
+								result.push('return ___v1ew.join("");}},\n{inverse:function(' + ARG_NAMES + '){\nvar ___v1ew = [];');
+								break;
+							case '^':
+								result.push('{inverse:function(' + ARG_NAMES + '){\nvar ___v1ew = [];');
+								break;
+
+								// Not a section, no mode
+							default:
+								result.push(')');
+								break;
+							}
+
+							// Return a raw result if there was a section, otherwise return the default string.
+							result = result.join('');
+							return mode ? {
+								raw: result
+							} : result;
+						}
+					}
+				]
+			})
+		});
+
+		// Add in default scanner helpers first.
+		// We could probably do this differently if we didn't 'break' on every match.
+		var helpers = can.view.Scanner.prototype.helpers;
+		for (var i = 0; i < helpers.length; i++) {
+			Mustache.prototype.scanner.helpers.unshift(helpers[i]);
+		}
+
+		/**
+		 * @function can.Mustache.txt
+		 * @hide
+		 *
+		 * Evaluates the resulting string based on the context/name.
+		 *
+		 * @param {Object|Array} context	The context stack to be used with evaluation.
+		 * @param {String} mode		The mode to evaluate the section with: # for truthy, ^ for falsey
+		 * @param {String|Object} name	The string (or sometimes object) to pass to the given helper method.
+		 */
+		Mustache.txt = function (scopeAndOptions, mode, name) {
+			var scope = scopeAndOptions.scope,
+				options = scopeAndOptions.options,
+				args = [],
+				helperOptions = {
+					fn: function () {},
+					inverse: function () {}
+				},
+				hash,
+				context = scope.attr("."),
+				getHelper = true;
+
+			// An array of arguments to check for truthyness when evaluating sections.
+			var validArgs,
+				// Whether the arguments meet the condition of the section.
+				valid = true,
+				result = [],
+				helper, argIsObserve, arg;
+
+			// convert lookup values to actual values in name, arguments, and hash
+			for (var i = 3; i < arguments.length; i++) {
+				arg = arguments[i];
+				if (mode && can.isArray(arg)) {
+					// merge into options
+					helperOptions = can.extend.apply(can, [helperOptions].concat(arg));
+				} else if (arg && arg[HASH]) {
+					hash = arg[HASH];
+					// get values on hash
+					for (var prop in hash) {
+						if (isLookup(hash[prop])) {
+							hash[prop] = Mustache.get(hash[prop].get, scopeAndOptions);
+						}
+					}
+				} else if (arg && isLookup(arg)) {
+					args.push(Mustache.get(arg.get, scopeAndOptions, false, true));
+				} else {
+					args.push(arg);
+				}
+			}
+
+			if (isLookup(name)) {
+				var get = name.get;
+				name = Mustache.get(name.get, scopeAndOptions, args.length, false);
+
+				// Base whether or not we will get a helper on whether or not the original
+				// name.get and Mustache.get resolve to the same thing. Saves us from running
+				// into issues like {{text}} / {text: 'with'}
+				getHelper = (get === name);
+			}
+
+			// overwrite fn and inverse to always convert to scopes
+			helperOptions.fn = makeConvertToScopes(helperOptions.fn, scope, options);
+			helperOptions.inverse = makeConvertToScopes(helperOptions.inverse, scope, options);
+
+			// Check for a registered helper or a helper-like function.
+			if (helper = (getHelper && (typeof name === "string" && Mustache.getHelper(name, options)) || (can.isFunction(name) && !name.isComputed && {
+				fn: name
+			}))) {
+				// Add additional data to be used by helper functions
+
+				can.extend(helperOptions, {
+					context: context,
+					scope: scope,
+					contexts: scope,
+					hash: hash
+				});
+
+				args.push(helperOptions);
+				// Call the helper.
+				return helper.fn.apply(context, args) || '';
+			}
+
+			if (can.isFunction(name)) {
+				if (name.isComputed) {
+					name = name();
+				}
+			}
+
+			validArgs = args.length ? args : [name];
+			// Validate the arguments based on the section mode.
+			if (mode) {
+				for (i = 0; i < validArgs.length; i++) {
+					arg = validArgs[i];
+					argIsObserve = typeof arg !== 'undefined' && isObserveLike(arg);
+					// Array-like objects are falsey if their length = 0.
+					if (isArrayLike(arg)) {
+						// Use .attr to trigger binding on empty lists returned from function
+						if (mode === '#') {
+							valid = valid && !! (argIsObserve ? arg.attr('length') : arg.length);
+						} else if (mode === '^') {
+							valid = valid && !(argIsObserve ? arg.attr('length') : arg.length);
+						}
+					}
+					// Otherwise just check if it is truthy or not.
+					else {
+						valid = mode === '#' ?
+							valid && !! arg : mode === '^' ?
+							valid && !arg : valid;
+					}
+				}
+			}
+
+			// Otherwise interpolate like normal.
+			if (valid) {
+				switch (mode) {
+					// Truthy section.
+				case '#':
+					// Iterate over arrays
+					if (isArrayLike(name)) {
+						var isObserveList = isObserveLike(name);
+
+						// Add the reference to the list in the contexts.
+						for (i = 0; i < name.length; i++) {
+							result.push(helperOptions.fn(name[i]));
+
+							// Ensure that live update works on observable lists
+							if (isObserveList) {
+								name.attr('' + i);
+							}
+						}
+						return result.join('');
+					}
+					// Normal case.
+					else {
+						return helperOptions.fn(name || {}) || '';
+					}
+					break;
+					// Falsey section.
+				case '^':
+					return helperOptions.inverse(name || {}) || '';
+				default:
+					// Add + '' to convert things like numbers to strings.
+					// This can cause issues if you are trying to
+					// eval on the length but this is the more
+					// common case.
+					return '' + (name != null ? name : '');
+				}
+			}
+
+			return '';
+		};
+
+		/**
+		 * @function can.Mustache.get
+		 * @hide
+		 *
+		 * Resolves a key for a given object (and then a context if that fails).
+		 *	obj = this
+		 *	context = { a: true }
+		 *	ref = 'a.b.c'
+		 *		=> obj.a.b.c || context.a.b.c || ''
+		 *
+		 * This implements the following Mustache specs:
+		 *	Deeply Nested Contexts
+		 *	All elements on the context stack should be accessible.
+		 *		{{#bool}}B {{#bool}}C{{/bool}} D{{/bool}}
+		 *		{ bool: true }
+		 *		=> "B C D"
+		 *	Basic Context Miss Interpolation
+		 *	Failed context lookups should default to empty strings.
+		 *		{{cannot}}
+		 *		=> ""
+		 *	Dotted Names - Broken Chains
+		 *	Any falsey value prior to the last part of the name should yield ''.
+		 *		{{a.b.c}}
+		 *		{ a: { d: 1 } }
+		 *		=> ""
+		 *
+		 * @param {can.Mustache.key} key The reference to check for on the obj/context.
+		 * @param {Object} obj The object to use for checking for a reference.
+		 * @param {Object} context  The context to use for checking for a reference if it doesn't exist in the object.
+		 * @param {Boolean} [isHelper]  Whether the reference is seen as a helper.
+		 */
+		Mustache.get = function (key, scopeAndOptions, isHelper, isArgument) {
+
+			// Cache a reference to the current context and options, we will use them a bunch.
+			var context = scopeAndOptions.scope.attr('.'),
+				options = scopeAndOptions.options || {};
+
+			// If key is called as a helper,
+			if (isHelper) {
+				// try to find a registered helper.
+				if (Mustache.getHelper(key, options)) {
+					return key;
+				}
+				// Support helper-like functions as anonymous helpers.
+				// Check if there is a method directly in the "top" context.
+				if (scopeAndOptions.scope && can.isFunction(context[key])) {
+					return context[key];
+				}
+
+			}
+
+			// Get a compute (and some helper data) that represents key's value in the current scope
+			var computeData = scopeAndOptions.scope.computeData(key, {
+				isArgument: isArgument,
+				args: [context, scopeAndOptions.scope]
+			}),
+				compute = computeData.compute;
+
+			// Bind on the compute to cache its value. We will unbind in a timeout later.
+			can.compute.temporarilyBind(compute);
+
+			// computeData gives us an initial value
+			var initialValue = computeData.initialValue;
+
+			// Use helper over the found value if the found value isn't in the current context
+			if ((initialValue === undefined || computeData.scope !== scopeAndOptions.scope) && Mustache.getHelper(key, options)) {
+				return key;
+			}
+
+			// If there are no dependencies, just return the value.
+			if (!compute.hasDependencies) {
+				return initialValue;
+			} else {
+				return compute;
+			}
+		};
+
+		/**
+		 * @hide
+		 *
+		 * Resolves an object to its truthy equivalent.
+		 *
+		 * @param {Object} value    The object to resolve.
+		 * @return {Object} The resolved object.
+		 */
+		Mustache.resolve = function (value) {
+			if (isObserveLike(value) && isArrayLike(value) && value.attr('length')) {
+				return value;
+			} else if (can.isFunction(value)) {
+				return value();
+			} else {
+				return value;
+			}
+		};
+
+		/**
+		 * @static
+		 */
+
+		var OptionsScope = can.view.Scope.extend({
+			init: function (data, parent) {
+				if (!data.helpers && !data.partials) {
+					data = {
+						helpers: data
+					};
+				}
+				can.view.Scope.prototype.init.apply(this, arguments);
+			}
+		});
+
+		// ## Helpers
+		//
+		// Helpers are functions that can be called from within a template.
+		// These helpers differ from the scanner helpers in that they execute
+		// at runtime instead of during compilation.
+		//
+		// Custom helpers can be added via `can.Mustache.registerHelper`,
+		// but there are also some built-in helpers included by default.
+		// Most of the built-in helpers are little more than aliases to actions 
+		// that the base version of Mustache simply implies based on the 
+		// passed in object.
+		// 
+		// Built-in helpers:
+		// 
+		// * `data` - `data` is a special helper that is implemented via scanning helpers. 
+		//		It hooks up the active element to the active data object: `<div {{data "key"}} />`
+		// * `if` - Renders a truthy section: `{{#if var}} render {{/if}}`
+		// * `unless` - Renders a falsey section: `{{#unless var}} render {{/unless}}`
+		// * `each` - Renders an array: `{{#each array}} render {{this}} {{/each}}`
+		// * `with` - Opens a context section: `{{#with var}} render {{/with}}`
+		Mustache._helpers = {};
+		/**
+		 * @description Register a helper.
+		 * @function can.Mustache.registerHelper registerHelper
+		 * @signature `Mustache.registerHelper(name, helper)`
+		 * @param {String} name The name of the helper.
+		 * @param {can.Mustache.helper} helper The helper function.
+		 *
+		 * @body
+		 * Registers a helper with the Mustache system.
+		 * Pass the name of the helper followed by the
+		 * function to which Mustache should invoke.
+		 * These are run at runtime.
+		 */
+		Mustache.registerHelper = function (name, fn) {
+			this._helpers[name] = {
+				name: name,
+				fn: fn
+			};
+		};
+
+		/**
+		 * @hide
+		 * @function can.Mustache.getHelper getHelper
+		 * @description Retrieve a helper.
+		 * @signature `Mustache.getHelper(name)`
+		 * @param {String} name The name of the helper.
+		 * @return {Function|null} The helper, or `null` if
+		 * no helper by that name is found.
+		 *
+		 * @body
+		 * Returns a helper given the name.
+		 */
+		Mustache.getHelper = function (name, options) {
+			var helper = options.attr("helpers." + name);
+			return helper ? {
+				fn: helper
+			} : this._helpers[name];
+		};
+
+		/**
+		 * @function can.Mustache.static.render render
+		 * @hide
+		 * @parent can.Mustache.static
+		 * @signature `Mustache.render(partial, context)`
+		 * @param {Object} partial
+		 * @param {can.view.Scope} scope
+		 *
+		 * @body
+		 * `Mustache.render` is a helper method that calls
+		 * into `can.view.render` passing the partial
+		 * and the context object.
+		 *
+		 * Its purpose is to determine if the partial object
+		 * being passed represents a template like:
+		 *
+		 *	partial === "movember.mustache"
+		 *
+		 * or if the partial is a variable name that represents
+		 * a partial on the context object such as:
+		 *
+		 *	context[partial] === "movember.mustache"
+		 */
+		Mustache.render = function (partial, scope, options) {
+			// TOOD: clean up the following
+			// If there is a "partial" property and there is not
+			// an already-cached partial, we use the value of the 
+			// property to look up the partial
+
+			// if this partial is not cached ...
+			if (!can.view.cached[partial]) {
+				// we don't want to bind to changes so clear and restore reading
+				var reads = can.__clearReading && can.__clearReading();
+				if (scope.attr('partial')) {
+					partial = scope.attr('partial');
+				}
+				if (can.__setReading) {
+					can.__setReading(reads);
+				}
+			}
+
+			// Call into `can.view.render` passing the
+			// partial and scope.
+			return can.view.render(partial, scope /*, options*/ );
+		};
+
+		/**
+		 * @function can.Mustache.safeString
+		 * @signature `can.Mustache.safeString(str)`
+		 *
+		 * @param {String} str A string you don't want to become escaped.
+		 * @return {String} A string flagged by `can.Mustache` as safe, which will
+		 * not become escaped, even if you use [can.Mustache.tags.unescaped](triple slash).
+		 *
+		 * @body
+		 * If you write a helper that generates its own HTML, you will
+		 * usually want to return a `can.Mustache.safeString.` In this case,
+		 * you will want to manually escape parameters with `[can.esc].`
+		 *
+		 * @codestart
+		 * can.Mustache.registerHelper('link', function(text, url) {
+		 *   text = can.esc(text);
+		 *   url  = can.esc(url);
+		 *
+		 *   var result = '&lt;a href="' + url + '"&gt;' + text + '&lt;/a&gt;';
+		 *   return can.Mustache.safeString(result);
+		 * });
+		 * @codeend
+		 *
+		 * Rendering:
+		 * @codestart
+		 * &lt;div&gt;{{link "Google", "http://google.com"}}&lt;/div&gt;
+		 * @codeend
+		 *
+		 * Results in:
+		 *
+		 * @codestart
+		 * &lt;div&gt;&lt;a href="http://google.com"&gt;Google&lt;/a&gt;&lt;/div&gt;
+		 * @codeend
+		 *
+		 * As an anchor tag whereas if we would have just returned the result rather than a
+		 * `can.Mustache.safeString` our template would have rendered a div with the escaped anchor tag.
+		 *
+		 */
+		Mustache.safeString = function (str) {
+			return {
+				toString: function () {
+					return str;
+				}
+			};
+		};
+
+		Mustache.renderPartial = function (partialName, scope, options) {
+			var partial = options.attr("partials." + partialName);
+			if (partial) {
+				return partial.render ? partial.render(scope, options) :
+					partial(scope, options);
+			} else {
+				return can.Mustache.render(partialName, scope, options);
+			}
+		};
+
+		// The built-in Mustache helpers.
+		can.each({
+			// Implements the `if` built-in helper.
+			/**
+			 * @function can.Mustache.helpers.if {{#if key}}
+			 * @parent can.Mustache.htags 2
+			 * @signature `{{#if key}}BLOCK{{/if}}`
+			 *
+			 * Renders the `BLOCK` template within the current template.
+			 *
+			 * @param {can.Mustache.key} key A key that references a value within the current or parent
+			 * context. If the value is a function or can.compute, the function's return value is used.
+			 *
+			 * @param {can.Mustache} BLOCK A mustache template.
+			 *
+			 * @return {String} If the key's value is truthy, the `BLOCK` is rendered with the
+			 * current context and its value is returned; otherwise, an empty string.
+			 *
+			 * @body
+			 *
+			 * ## Use
+			 *
+			 * `{{#if key}}` provides explicit conditional truthy tests. For example,
+			 *
+			 * The template:
+			 *
+			 *     {{#if user.isFemale}}
+			 *       {{#if user.isMarried}}
+			 *         Mrs
+			 *       {{/if}}
+			 *       {{#if user.isSingle}}
+			 *         Miss
+			 *       {{/if}}
+			 *     {{/if}}
+			 *
+			 * Rendered with:
+			 *
+			 *     {user: {isFemale: true, isMarried: true}}
+			 *
+			 * Results in:
+			 *
+			 *     Mrs
+			 *
+			 * If can be used with [can.Mustache.helpers.else {{else}}] too. For example,
+			 *
+			 *     {{#if user.isFemale}}
+			 *       {{#if user.isMarried}}
+			 *         Mrs
+			 *       {{else}}
+			 *         Miss
+			 *       {{/if}}
+			 *     {{/if}}
+			 *
+			 * Rendered with:
+			 *
+			 *     {user: {isFemale: true, isMarried: false}}
+			 *
+			 * Results in:
+			 *
+			 *     Miss
+			 */
+			'if': function (expr, options) {
+				var value;
+				// if it's a function, wrap its value in a compute
+				// that will only change values from true to false
+				if (can.isFunction(expr)) {
+					value = can.compute.truthy(expr)();
+				} else {
+					value = !! Mustache.resolve(expr);
+				}
+
+				if (value) {
+					return options.fn(options.contexts || this);
+				} else {
+					return options.inverse(options.contexts || this);
+				}
+			},
+			// Implements the `unless` built-in helper.
+			/**
+			 * @function can.Mustache.helpers.unless {{#unless key}}
+			 * @parent can.Mustache.htags 4
+			 *
+			 * @signature `{{#unless key}}BLOCK{{/unless}}`
+			 *
+			 * Render the block of text if the key's value is falsey.
+			 *
+			 * @param {can.Mustache.key} key A key that references a value within the current or parent
+			 * context. If the value is a function or can.compute, the function's
+			 * return value is used.
+			 *
+			 * @param {can.Mustache} BLOCK A template that is rendered
+			 * if the `key`'s value is falsey.
+			 *
+			 * @body
+			 *
+			 * The `unless` helper evaluates the inverse of the value
+			 * of the key and renders the block between the helper and the slash.
+			 *
+			 *     {{#unless expr}}
+			 *       // unless
+			 *     {{/unless}}
+			 */
+			'unless': function (expr, options) {
+				if (!Mustache.resolve(expr)) {
+					return options.fn(options.contexts || this);
+				}
+			},
+
+			// Implements the `each` built-in helper.
+			/**
+			 * @function can.Mustache.helpers.each {{#each key}}
+			 * @parent can.Mustache.htags 5
+			 *
+			 * @signature `{{#each key}}BLOCK{{/each}}`
+			 *
+			 * Render the block of text for each item in key's value.
+			 *
+			 * @param {can.Mustache.key} key A key that references a value within the current or parent
+			 * context. If the value is a function or can.compute, the function's
+			 * return value is used.
+			 *
+			 * If the value of the key is a [can.List], the resulting HTML is updated when the
+			 * list changes. When a change in the list happens, only the minimum amount of DOM
+			 * element changes occur.
+			 *
+			 * If the value of the key is a [can.Map], the resulting HTML is updated whenever
+			 * attributes are added or removed. When a change in the map happens, only
+			 * the minimum amount of DOM element changes occur.
+			 *
+			 * @param {can.Mustache} BLOCK A template that is rendered for each item in
+			 * the `key`'s value. The `BLOCK` is rendered with the context set to the item being rendered.
+			 *
+			 * @body
+			 *
+			 * ## Use
+			 *
+			 * Use the `each` helper to iterate over a array
+			 * of items and render the block between the helper and the slash. For example,
+			 *
+			 * The template:
+			 *
+			 *     <ul>
+			 *       {{#each friends}}
+			 *         <li>{{name}}</li>
+			 *       {{/each}}
+			 *     </ul>
+			 *
+			 * Rendered with:
+			 *
+			 *     {friends: [{name: "Austin"},{name: "Justin"}]}
+			 *
+			 * Renders:
+			 *
+			 *     <ul>
+			 *       <li>Austin</li>
+			 *       <li>Justin</li>
+			 *     </ul>
+			 *
+			 * ## Object iteration
+			 *
+			 * As of 2.1, you can now iterate over properties of objects and attributes with
+			 * the `each` helper. When iterating over [can.Map] it will only iterate over the
+			 * map's [keys](can.Map.keys.html) and none of the hidden properties of a can.Map. For example,
+			 *
+			 * The template:
+			 *
+			 *     <ul>
+			 *       {{#each person}}
+			 *         <li>{{.}}</li>
+			 *       {{/each}}
+			 *     </ul>
+			 *
+			 * Rendered with:
+			 *
+			 *     {person: {name: 'Josh', age: 27}}
+			 *
+			 * Renders:
+			 *
+			 *     <ul>
+			 *       <li>Josh</li>
+			 *       <li>27</li>
+			 *     </ul>
+			 */
+			'each': function (expr, options) {
+				var result = [];
+				var keys, key, i;
+				// Check if this is a list or a compute that resolves to a list, and setup
+				// the incremental live-binding 
+
+				// First, see what we are dealing with.  It's ok to read the compute
+				// because can.view.text is only temporarily binding to what is going on here.
+				// Calling can.view.lists prevents anything from listening on that compute.
+				var resolved = Mustache.resolve(expr);
+
+				// When resolved === undefined, the property hasn't been defined yet
+				// Assume it is intended to be a list
+				if (can.view.lists && (resolved instanceof can.List || (expr && expr.isComputed && resolved === undefined))) {
+					return can.view.lists(expr, function (item, index) {
+						return options.fn(options.scope.add({
+								"@index": index
+							})
+							.add(item));
+					});
+				}
+				expr = resolved;
+
+				if ( !! expr && isArrayLike(expr)) {
+					for (i = 0; i < expr.length; i++) {
+						var index = function () {
+							return i;
+						};
+
+						result.push(options.fn(options.scope.add({
+								"@index": index
+							})
+							.add(expr[i])));
+					}
+					return result.join('');
+				} else if (isObserveLike(expr)) {
+					keys = can.Map.keys(expr);
+					for (i = 0; i < keys.length; i++) {
+						key = keys[i];
+						result.push(options.fn(options.scope.add({
+								"@key": key
+							})
+							.add(expr[key])));
+					}
+					return result.join('');
+				} else if (expr instanceof Object) {
+					for (key in expr) {
+						result.push(options.fn(options.scope.add({
+								"@key": key
+							})
+							.add(expr[key])));
+					}
+					return result.join('');
+
+				}
+			},
+			// Implements the `with` built-in helper.
+			/**
+			 * @function can.Mustache.helpers.with {{#with key}}
+			 * @parent can.Mustache.htags 6
+			 *
+			 * @signature `{{#with key}}BLOCK{{/with}}`
+			 *
+			 * Changes the context within a block.
+			 *
+			 * @param {can.Mustache.key} key A key that references a value within the current or parent
+			 * context. If the value is a function or can.compute, the function's
+			 * return value is used.
+			 *
+			 * @param {can.Mustache} BLOCK A template that is rendered
+			 * with the context of the `key`'s value.
+			 *
+			 * @body
+			 *
+			 * Mustache typically applies the context passed in the section
+			 * at compiled time.  However, if you want to override this
+			 * context you can use the `with` helper.
+			 *
+			 *     {{#with arr}}
+			 *       // with
+			 *     {{/with}}
+			 */
+			'with': function (expr, options) {
+				var ctx = expr;
+				expr = Mustache.resolve(expr);
+				if ( !! expr) {
+					return options.fn(ctx);
+				}
+			},
+			/**
+			 * @function can.Mustache.helpers.log {{log}}
+			 * @parent can.Mustache.htags 9
+			 *
+			 * @signature `{{#log [message]}}`
+			 *
+			 * Logs the context of the current block with an optional message.
+			 *
+			 * @param {*} message An optional message to log out in addition to the
+			 * current context.
+			 *
+			 */
+			'log': function (expr, options) {
+				if (console !== undefined) {
+					if (!options) {
+						console.log(expr.context);
+					} else {
+						console.log(expr, options.context);
+					}
+				}
+			}
+			/**
+			 * @function can.Mustache.helpers.elementCallback {{(el)->CODE}}
+			 *
+			 * @parent can.Mustache.htags 8
+			 *
+			 * @signature `{{(el) -> CODE}}`
+			 *
+			 * Executes an element callback with the inline code on the element.
+			 *
+			 * @param {String} code The inline code to execute on the element.
+			 *
+			 * @body
+			 *
+			 * ## Use
+			 *
+			 * It is common for you to want to execute some code on a given
+			 * DOM element. An example would be for initializing a jQuery plugin
+			 * on the new HTML.
+			 *
+			 *	<div class="tabs" {{(el) -> el.jquery_tabs()}}></div>
+			 *
+			 */
+			//
+			/**
+			 * @function can.Mustache.helpers.index {{@index}}
+			 *
+			 * @parent can.Mustache.htags 10
+			 *
+			 * @signature `{{@index [offset]}}`
+			 *
+			 * Insert the index of an Array or can.List we are iterating on with [#each](can.Mustache.helpers.each)
+			 *
+			 * @param {Number} offset The number to optionally offset the index by.
+			 *
+			 * @body
+			 *
+			 * ## Use
+			 *
+			 * When iterating over and array or list of items, you might need to render the index
+			 * of the item. Use the `@index` directive to do so. For example,
+			 *
+			 * The template:
+			 *
+			 *     <ul>
+			 *       {{#each items}}
+			 *         <li> {{@index}} - {{.}} </li>
+			 *       {{/each}}
+			 *     </ul>
+			 *
+			 * Rendered with:
+			 *
+			 *     { items: ['Josh', 'Eli', 'David'] }
+			 *
+			 * Renders:
+			 *
+			 *     <ul>
+			 *       <li> 0 - Josh </li>
+			 *       <li> 1 - Eli </li>
+			 *       <li> 2 - David </li>
+			 *     </ul>
+			 *
+			 */
+			//
+			/**
+			 * @function can.Mustache.helpers.key {{@key}}
+			 *
+			 * @parent can.Mustache.htags 11
+			 *
+			 * @signature `{{@key}}`
+			 *
+			 * Insert the property name of an Object or attribute name of a can.Map that we iterate over with [#each](can.Mustache.helpers.each)
+			 *
+			 * @body
+			 *
+			 * ## Use
+			 *
+			 * Use `{{@key}}` to render the property or attribute name of an Object or can.Map, when iterating over it with [#each](can.Mustache.helpers.each). For example,
+			 *
+			 * The template:
+			 *
+			 *     <ul>
+			 *       {{#each person}}
+			 *         <li> {{@key}}: {{.}} </li>
+			 *       {{/each}}
+			 *     </ul>
+			 *
+			 * Rendered with:
+			 *
+			 *     { person: {name: 'Josh', age: 27, likes: 'Mustache, JavaScript, High Fives'} }
+			 *
+			 * Renders:
+			 *
+			 *     <ul>
+			 *       <li> name: Josh </li>
+			 *       <li> age: 27 </li>
+			 *       <li> likes: Mustache, JavaScript, High Fives </li>
+			 *     </ul>
+			 *
+			 */
+		}, function (fn, name) {
+			Mustache.registerHelper(name, fn);
+		});
+
+		// ## Registration
+		//
+		// Registers Mustache with can.view.
+		can.view.register({
+			suffix: "mustache",
+
+			contentType: "x-mustache-template",
+
+			// Returns a `function` that renders the view.
+			script: function (id, src) {
+				return "can.Mustache(function(" + ARG_NAMES + ") { " + new Mustache({
+					text: src,
+					name: id
+				})
+					.template.out + " })";
+			},
+
+			renderer: function (id, text) {
+				return Mustache({
+					text: text,
+					name: id
+				});
+			}
+		});
+
+		return can;
+	});
+define('src/js/contact/list/grid/grid',['can/util/string',
+        'text!src/js/contact/list/grid/init.mustache',
+        'can/control',
+        'can/construct/proxy',
+        'can/view/mustache'
+    ],
+    function(can, contactsStache) {
+
+        return can.Control.extend({
+            defaults: {}
+        }, {
+            init: function() {
+                this.update();
+            },
+            "{items} change": "update",
+            update: function() {
+                var items = this.options.items();
+                if (can.isDeferred(items)) {
+                    this.element.find('tbody').css('opacity', 0.5)
+                    items.then(this.proxy('draw'));
+                } else {
+                    this.draw(items);
+                }
+            },
+            draw: function(items) {
+                this.element.find('tbody').css('opacity', 1);
+                var data = $.extend({}, this.options, {
+                    items: items
+                }),
+                    tpl = can.view.mustache(contactsStache);
+
+                this.element.html(tpl(data));
+            }
+
+        });
+    });
+
+define('text!src/js/contact/list/init.mustache',[],function () { return '<table id=\'contacts\'></table>\n<div id=\'pager\'></div>\n<div id=\'pagecount\'></div>';});
+
+define('src/js/contact/list/list',['can/util/string',
+        'src/js/models/contact',
+        'src/js/contact/list/paginate',
+        'src/js/contact/list/pager/pager',
+        'src/js/contact/list/grid/grid',
+        'text!src/js/contact/list/init.mustache',
+        'can/control',
+        'can/view',
+        'can/view/mustache',
+
+    ],
+    function(can, Contact, Paginate, Pager, Grid, initStache) {
+        return can.Control.extend('List', {
+            defaults: {}
+        }, {
+            init: function(el, opts) {
+                var paginate = opts.paginate = new Paginate({
+                    limit: 20
+                }),
+                    tpl = can.view.mustache(initStache);
+                el.html(tpl({
+                    paginate: paginate
+                }));
+
+                new Pager('#pager', {
+                    paginate: paginate
+                });
+
+                // Map the page state the
+                // the list of options the grid
+                // should display
+                var items = can.compute(function() {
+                    var params = {
+                        limit: paginate.attr('limit'),
+                        offset: paginate.attr('offset'),
+                        page: paginate.page()
+                    };
+                    var contactsDeferred = Contact.findAll(params);
+                    contactsDeferred.then(function(contacts) {
+                        paginate.attr('count', contacts.count)
+                    });
+                    return contactsDeferred
+                });
+
+                // Create the grid.
+                new Grid("#contacts", {
+                    items: items
+                });
+
+
+            },
+            "{paginate} offset": function(paginate) {
+                can.route.attr('page', paginate.page());
+            },
+            // update the page's state when the route changes
+            "{can.route} page": function(route) {
+                this.options.paginate.page(route.attr('page'));
+            }
+        });
+    });
+define('src/js/contact/contact_control',['can/util/string',
+        'src/js/contact/list/list',
+        'can/control'
+    ],
+    function(can, List) {
+        return can.Control.extend('Contacts', {
+            defaults: {
+                views: {
+                    index: List
+                }
+            }
+        }, {
+            init: function(el, opts) {
+                this.startControl(can.route.attr('view'));
+            },
+            '{can.route} view': function(route, ev, newVal, oldVal) {
+                this.startControl(newVal);
+            },
+            startControl: function(view) {
+
+                var view = this.options.views[view];
+
+                var el = $('<div/>');
+                if (can.isFunction(view)) {
+                    this.element.html(el), new view(this.element.find('div'));
+                }
+            }
+        });
+    });
+define('src/js/appcontrol/appcontrol',['can/util/string',
+    'src/js/home/home',
+    'src/js/contact/contact_control',
+    'can/control'
+], function(can, Home, Contact) {
+    return can.Control.extend({
+        defaults: {
+            controls: {
+                home: Home,
+                contact: Contact
+            }
+        }
+    }, {
+        init: function(el, opts) {
+            this.startControl(can.route.attr('control'));
+        },
+        '{can.route} control': function(route, ev, newVal, oldVal) {
+            this.startControl(newVal);
+        },
+        startControl: function(control) {
+            var control = this.options.controls[control];
+
+            var el = $('<div/>');
+            if (can.isFunction(control)) {
+                this.element.html(el), new control(this.element.find('div'));
+            }
+        }
+    });
+});
+/*!
+ * CanJS - 2.0.7
+ * http://canjs.us/
+ * Copyright (c) 2014 Bitovi
+ * Wed, 26 Mar 2014 16:12:27 GMT
+ * Licensed MIT
+ * Includes: CanJS default build
+ * Download from: http://canjs.us/
+ */
 define('can/util/string/deparam',["can/util/library", "can/util/string"], function (can) {
 	// ## deparam.js  
 	// `can.deparam`  
@@ -15968,10 +23790,22 @@ require(['can/util/string', 'src/js/appcontrol/appcontrol', 'can/route'], functi
     can.route.ready(false);
     can.route(':control');
     can.route(':control/:view');
+    can.route(':control/:view/:id');
+    can.route(':control/:view/:page');
     can.route('', {
         control: 'home',
         view: 'index'
     });
+
+    can.route('contact/:view', {
+        view: 'index'
+    });
+
+    can.route('contact/index/:page', {
+        page: 1
+    });
+
+
 
     can.route.ready();
     new AppControl('#main');

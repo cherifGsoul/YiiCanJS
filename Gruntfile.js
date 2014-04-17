@@ -9,6 +9,7 @@ module.exports = function(grunt) {
                         'can': 'src/vendors/canjs/amd/can',
                         'underscore': 'src/vendors/underscore/underscore',
                         'moment': 'src/vendors/momentjs/moment',
+                        text: "src/vendors/requirejs-text/text",
                     },
                     baseUrl: ".",
                     name: 'src/vendors/almond/almond.js',
@@ -58,7 +59,9 @@ module.exports = function(grunt) {
         // },
         watch: {
             requireBuild: {
-                files: ['Gruntfile.js', 'src/main.js', 'src/js/**/*.js', 'src/javascripts/**/*.mustache'],
+                files: ['Gruntfile.js', 'src/main.js', 'src/js/**/*.js',
+                    'src/js/**/*.mustache'
+                ],
                 tasks: ['requirejs']
             },
             less: {

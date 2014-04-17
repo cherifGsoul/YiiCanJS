@@ -4,6 +4,7 @@
 */
 class ApiController extends CController
 {
+	public $layout=false;
 	
 	public function init()
 	{

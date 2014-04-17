@@ -1,8 +1,13 @@
-define(['can/util/string', 'src/js/home/home', 'can/control'], function(can, Home) {
+define(['can/util/string',
+    'src/js/home/home',
+    'src/js/contact/contact_control',
+    'can/control'
+], function(can, Home, Contact) {
     return can.Control.extend({
         defaults: {
             controls: {
-                home: Home
+                home: Home,
+                contact: Contact
             }
         }
     }, {
@@ -14,6 +19,7 @@ define(['can/util/string', 'src/js/home/home', 'can/control'], function(can, Hom
         },
         startControl: function(control) {
             var control = this.options.controls[control];
+
             var el = $('<div/>');
             if (can.isFunction(control)) {
                 this.element.html(el), new control(this.element.find('div'));

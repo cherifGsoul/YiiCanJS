@@ -12,6 +12,11 @@ class ApiModule extends CWebModule
 			'api.models.*',
 			'api.components.*',
 		));
+		Yii::app()->setComponents(array(
+			'contactApi'=>array(
+				'class'=>'ContactApi'
+				)
+			),false);
 	}
 
 	public function beforeControllerAction($controller, $action)
