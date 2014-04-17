@@ -23787,23 +23787,21 @@ define('can/route',["can/util/library", "can/map", "can/list", "can/util/string/
 	return can.route;
 });
 require(['can/util/string', 'src/js/appcontrol/appcontrol', 'can/route'], function(can, AppControl) {
-    can.route.ready(false);
+
     can.route(':control');
     can.route(':control/:view');
     can.route(':control/:view/:id');
-    can.route(':control/:view/:page');
-    can.route('', {
+
+    can.route(':control/:view/page/:page');
+
+    can.route(':control', {
         control: 'home',
-        view: 'index'
     });
 
     can.route('contact/:view', {
         view: 'index'
-    });
+    })
 
-    can.route('contact/index/:page', {
-        page: 1
-    });
 
 
 
