@@ -12,7 +12,6 @@ define(['can/util/string',
         }
     }, {
         init: function(el, opts) {
-            console.log(can.route.attr());
             this.startControl(can.route.attr('control'));
         },
         '{can.route} control': function(route, ev, newVal, oldVal) {

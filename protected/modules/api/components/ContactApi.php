@@ -10,7 +10,7 @@ class ContactApi extends CApplicationComponent
 
 		$cmd=Yii::app()->db->createCommand();
 		$cmd->select()->from( '{{contact}}' );
-		$count=Yii::app()->db->createCommand( 'SELECT COUNT(id) FROM {{contact}}' )->queryScalar();
+		$count=Yii::app()->db->createCommand( 'SELECT COUNT(*) FROM ('.$cmd->text.') as contactsCount' )->queryScalar();
 
 		return new CSqlDataProvider( $cmd, array(
 				'totalItemCount'=>$count,
