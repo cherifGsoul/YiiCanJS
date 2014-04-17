@@ -15,7 +15,8 @@ define(['can/util/string',
         }, {
             init: function(el, opts) {
                 var paginate = opts.paginate = new Paginate({
-                    limit: 20
+                    limit: 20,
+                    maxLinks: 10
                 }),
                     tpl = can.view.mustache(initStache);
                 el.html(tpl({
@@ -46,7 +47,7 @@ define(['can/util/string',
                 new Grid("#contacts", {
                     items: items
                 });
-
+                this.on();
 
             },
             "{paginate} offset": function(paginate) {

@@ -1,8 +1,9 @@
-{{#paginate.canPrev}}
-<a href="javascript://" class="prev {{#paginate.canPrev}}enabled{{/paginate.canPrev}}">Prev</a>
-{{/paginate.canPrev}}
-<div class="pagination pagination-small pagination-centered">
+<div class="pagination pagination-centered pagination-small">
 <ul>
+	{{#paginate.canPrev}}
+<li><a href="javascript://" class="prev {{#paginate.canPrev}}enabled{{/paginate.canPrev}}"><<</a></li>
+{{/paginate.canPrev}}
+
 {{#paginate.pages}}
 <li class="page" {{data 'page'}}>
 	<a href="javascript://">
@@ -10,7 +11,9 @@
 	</a>
 </li>
 	{{/paginate.pages}}
-</ul></div>
-{{#paginate.canNext}}
-<a href="javascript://" class="next {{#paginate.canNext}}enabled{{/paginate.canNext}}">Next</a>
+	{{#paginate.canNext}}
+<li><a href="javascript://" class="next {{#paginate.canNext}}enabled{{/paginate.canNext}}">>></a></li>
 {{/paginate.canNext}}
+</ul>
+</div>
+

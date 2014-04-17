@@ -2,7 +2,7 @@ define(['can/util/string',
     'text!src/js/contact/list/pager/init.mustache',
     'can/control'
 ], function(can, pagerStache) {
-    return can.Control.extend('Pager', {
+    return can.Control.extend({
         defaults: {}
     }, {
         init: function() {

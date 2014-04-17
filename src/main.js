@@ -8,12 +8,8 @@ require(['can/util/string', 'src/js/appcontrol/appcontrol', 'can/route'], functi
 
     can.route(':control', {
         control: 'home',
+        view: 'index',
     });
-
-    can.route('contact/:view', {
-        view: 'index'
-    })
-
 
 
 

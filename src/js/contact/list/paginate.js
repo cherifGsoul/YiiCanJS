@@ -1,8 +1,9 @@
-define(['can/util/string', 'can/map'], function(can) {
+define(['can/util/string', 'can/map', 'can/map/attributes'], function(can) {
     return can.Map.extend('Paginate', {
         count: Infinity,
         offset: 0,
         limit: 5,
+        maxLinks: 5,
         next: function() {
             this.attr('offset', this.offset + this.limit);
         },
@@ -53,11 +54,17 @@ define(['can/util/string', 'can/map'], function(can) {
             }
             return pages;
         },
+        setMaxLinks: function(newVal) {
+            if (newVal && newVal > 0)
+                return newVal;
+            else
+                return 5;
+        },
         pageRange: function() {
 
             var page = this.page(),
                 count = this.pageCount(),
-                maxLinks = 5,
+                maxLinks = this.attr('maxLinks'),
                 beginPage = Math.ceil(Math.max(1, page - maxLinks / 2)),
 
                 endPage = beginPage + maxLinks - 1;

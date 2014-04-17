@@ -5,7 +5,6 @@ define(['can/util/string', 'src/js/models/contact', 'can/control'], function(can
         }
     }, {
         init: function(el, options) {
-            var contacts = Contact.findAll({});
             el.html('Homepage content');
         }
     });

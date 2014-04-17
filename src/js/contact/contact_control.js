@@ -11,6 +11,7 @@ define(['can/util/string',
             }
         }, {
             init: function(el, opts) {
+                console.log(can.route.attr('view'));
                 this.startControl(can.route.attr('view'));
             },
             '{can.route} view': function(route, ev, newVal, oldVal) {
@@ -20,7 +21,7 @@ define(['can/util/string',
 
                 var view = this.options.views[view];
 
-                var el = $('<div/>');
+                var el = $('<div/>').addClass('span12');
                 if (can.isFunction(view)) {
                     this.element.html(el), new view(this.element.find('div'));
                 }
